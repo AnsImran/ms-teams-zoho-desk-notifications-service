@@ -1,0 +1,46 @@
+RADIOLOGIST REPORT (LAST HOUR)
+============================================================
+
+Radiologist name          : Tank, Jay M.D.
+Date/time report started  : 2026-02-11 07:00:00 PST
+Date/time report ended    : 2026-02-11 08:00:00 PST
+Completed exams           : 3
+Completed RVU             :
+------------------------------------------------------------
+
+Completion date/time            RVU      Exam type
+
+2026-02-11 07:02:00 PST                  CT BRAIN W/O CONTRAST
+2026-02-11 07:03:00 PST                  CT BRAIN STROKE W/O CONTRAST
+2026-02-11 07:15:00 PST                  XR CHEST AP PORTABLE
+
+============================================================
+
+
+RADIOLOGIST REPORT (CUMULATIVE DAILY)
+============================================================
+
+Radiologist name          : Tank, Jay M.D.
+Date/time report started  : 2026-02-11 00:00:00 PST
+Date/time report ended    : 2026-02-11 08:00:00 PST
+Date/time of first exam   : 2026-02-11 05:18:00 PST
+Date/time of last exam    : 2026-02-11 07:15:00 PST
+Elapsed time first/last   : 1 hours 57 minutes 00 seconds
+Completed exams           : 7
+Average exams per hour    : 3.59 exams per hour
+Completed RVU             :
+Average RVU per hour      :
+------------------------------------------------------------
+
+Completion date/time            RVU      Exam type
+
+2026-02-11 05:18:00 PST                  XR FINGERS RIGHT AP LATW/1OBLQ
+2026-02-11 05:39:00 PST                  CT ABD   PELVIS W .IV CONT
+2026-02-11 05:53:00 PST                  XR CHEST AP PORTABLE
+2026-02-11 05:54:00 PST                  CT ABD   PELVIS W .IV CONT
+2026-02-11 07:02:00 PST                  CT BRAIN W/O CONTRAST
+2026-02-11 07:03:00 PST                  CT BRAIN STROKE W/O CONTRAST
+2026-02-11 07:15:00 PST                  XR CHEST AP PORTABLE
+
+============================================================
+END REPORT

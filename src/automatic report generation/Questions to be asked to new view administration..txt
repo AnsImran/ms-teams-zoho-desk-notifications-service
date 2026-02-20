@@ -1,0 +1,16 @@
+1. **Request to create an external system user**
+
+* In the document you shared in your last email, it says we must ask the NewVue administration to create a user intended for ``external system identification``. Can you please create this user for us?
+* Once this external system user is created, can you share the following details with us:
+  * the **username**
+  * the **secret key**
+  * the **tenant ID**
+To our best understanding, we need it to generate a token, and that token will then be used to access the api endpoints. 
+
+
+2. **Access to unread vs. finished/read studies**
+
+* Based on the document, it looks like the API only allows access to **unread studies** from the worklist. Is that correct?
+* Is it also possible to access studies/exams that are already **read/final/ finished** by the radiologist (finalized cases where a report has been generated)?
+* If finished/read exams can be accessed, can the API also provide the **timestamp** showing when the exam was finalized?
+* Specifically, can we get the **date and time** when the radiologist finished creating the report (i.e., when the exam/report became final)?
