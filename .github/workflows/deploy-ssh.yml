@@ -88,10 +88,20 @@ jobs:
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_REMOTE_PATH }}/"
 
       - name: Post-deploy command (optional)
-        if: ${{ secrets.DEPLOY_POST_COMMAND != '' && inputs.dry_run == false }}
         shell: bash
         run: |
           set -euo pipefail
           PORT="${{ secrets.DEPLOY_PORT }}"
           if [ -z "$PORT" ]; then PORT="22"; fi
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "Skipping post command because dry_run=true"
+            exit 0
+          fi
+
+          if [ -z "${{ secrets.DEPLOY_POST_COMMAND }}" ]; then
+            echo "Skipping post command because DEPLOY_POST_COMMAND is empty"
+            exit 0
+          fi
+
           ssh -p "$PORT" -i ~/.ssh/id_ed25519 "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "${{ secrets.DEPLOY_POST_COMMAND }}"
