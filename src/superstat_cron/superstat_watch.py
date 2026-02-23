@@ -604,26 +604,6 @@ def search_tickets(token: str, statuses: List[str], hours: int) -> List[Dict[str
     out.sort(key=lambda t: t.get("createdTime") or "", reverse=True)  # Sort tickets newest-first as a safety step.
     return out  # Return the list of tickets.
 
-def get_ticket_details(token: str, ticket_id: str) -> Dict[str, Any]:
-    """
-    Get full details for one Zoho Desk ticket.
-
-    Lay-person explanation:
-    - The search endpoint returns a simplified "row".
-    - To read fields like description, product, webUrl, etc. reliably,
-      we fetch the full ticket details by ID.
-
-    Args:
-        token: Access token for Zoho Desk.
-        ticket_id: The ticket's unique ID.
-
-    Returns:
-        A dictionary with detailed ticket information.
-    """
-    url = f"{ZOHO_DESK_BASE}/api/v1/tickets/{ticket_id}"  # Build the ticket detail URL.
-    r = requests.get(url, headers=desk_headers(token), timeout=30)  # Make the API call.
-    r.raise_for_status()  # Raise exception if request failed.
-    return r.json()  # Return the ticket details JSON.
 
 # -----------------------------
 # Matching logic (deciding if a ticket should alert)
@@ -735,6 +715,7 @@ def older_than_min_age(details: Dict[str, Any]) -> Tuple[bool, str]:
         - ok: True if ticket is old enough, False otherwise.
         - reason: Explanation string for logs/emails.
     """
+
     created_raw = details.get("createdTime") or ""  # Read createdTime safely.
     if not created_raw:  # If createdTime is missing...
         return False, "missing createdTime"  # Cannot verify age.
@@ -828,6 +809,11 @@ def main_loop() -> None:
 
             tickets = search_tickets(token, statuses=sorted(ACTIVE_STATUSES), hours=MAX_AGE_HOURS)  # Search recent active tickets.
             print(f"Fetched {len(tickets)} ticket(s) from search endpoint.")  # Log how many were found.
+            # DEBUG: Save raw search response locally for inspection. Comment out when not needed.
+            debug_dump_path = f"search_results_{int(time.time())}.json"
+            with open(debug_dump_path, "w", encoding="utf-8") as f:
+                json.dump(tickets, f, indent=2)
+            print(f"Saved raw search results to {debug_dump_path}")
 
             hits = 0  # Count how many alerts we send in this run.
 
@@ -840,7 +826,8 @@ def main_loop() -> None:
                 if row_status and row_status not in ACTIVE_STATUSES:  # If status isn't one we care about...
                     continue  # Skip it.
 
-                details = get_ticket_details(token, tid)  # Fetch full details for ticket.
+                # We already have all needed fields from the search payload, so avoid an extra API call.
+                details = row  # Use search row as "details" to keep downstream logic unchanged.
 
                 should, reason = should_alert(row, details)  # Decide if we should alert and why.
                 if not should:  # If we should NOT alert...
