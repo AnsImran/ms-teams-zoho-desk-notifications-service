@@ -46,9 +46,9 @@ load_dotenv()  # Load variables from a .env file (if present) into the environme
 # - The documentation is very necessary.
 # The monitoring logic below will still alert on every run for matching unresolved tickets.
 
-CHECK_EVERY_SECONDS = int(os.getenv("CHECK_EVERY_SECONDS", "300"))
+CHECK_EVERY_SECONDS = int(os.getenv("CHECK_EVERY_SECONDS", "30"))
 # How often we check for tickets, in seconds.
-# Default is 300 seconds = 5 minutes.
+# Default is 30 seconds so we spot new tickets quickly.
 
 MAX_AGE_HOURS = int(os.getenv("MAX_AGE_HOURS", "24"))
 # We only look at tickets created within the last N hours (default: 24 hours).
@@ -94,6 +94,12 @@ TOKEN_CACHE: Dict[str, Any] = {
 }
 TOKEN_LIFETIME_SECONDS = 3600          # Zoho access tokens last for 1 hour.
 TOKEN_RENEW_GRACE_SECONDS = 10 * 60    # Refresh when less than 10 minutes remain.
+
+LAST_SENT_FILE = os.getenv("LAST_SENT_FILE", "sent_notifications.json")
+# File where we remember when we last sent notifications per ticket (persists across restarts).
+
+NOTIFY_COOLDOWN_SECONDS = int(os.getenv("NOTIFY_COOLDOWN_SECONDS", str(5 * 60)))
+# Minimum time that must pass before we send another notification for the same ticket (default 5 minutes).
 
 ZOHO_DESK_BASE = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")
 # Base URL for Zoho Desk API requests.
@@ -304,6 +310,55 @@ def desk_headers(token: str) -> Dict[str, str]:
 # # -----------------------------
 # # "Seen tickets" state functions (kept for documentation; not used in runtime flow)
 # # -----------------------------
+
+# -----------------------------
+# Last-sent notification tracking (to avoid spamming the same ticket too often)
+# -----------------------------
+
+def load_last_sent(path: str) -> Dict[str, datetime]:
+    """
+    Load the dictionary that remembers when we last sent a notification per ticket.
+
+    Lay-person explanation:
+    - We keep a small JSON file so we don't lose track across restarts.
+    - Keys are ticket IDs; values are timestamps (local time) in ISO string form.
+
+    Args:
+        path: File path where the JSON is stored.
+
+    Returns:
+        Dictionary mapping ticket_id -> datetime of last send (local time).
+    """
+    if not os.path.exists(path):  # If the file doesn't exist yet...
+        return {}  # Return an empty dictionary.
+    try:
+        with open(path, "r", encoding="utf-8") as f:  # Open the file for reading.
+            data = json.load(f)  # Parse JSON content.
+        out: Dict[str, datetime] = {}  # Prepare the output dictionary.
+        for k, v in data.items():  # Walk through each saved entry.
+            try:
+                out[k] = datetime.fromisoformat(v)  # Convert ISO string back to datetime (local).
+            except Exception:
+                continue  # If any entry is malformed, skip it to be safe.
+        return out  # Return the reconstructed dictionary.
+    except Exception:
+        return {}  # On any error, fall back to empty (fail-safe).
+
+def save_last_sent(path: str, payload: Dict[str, datetime]) -> None:
+    """
+    Persist the last-sent dictionary to JSON so restarts keep the cooldown memory.
+
+    Lay-person explanation:
+    - We write a simple JSON file with ticket_id -> ISO timestamp.
+    - This keeps us from re-sending too soon after a restart.
+
+    Args:
+        path: File path to write.
+        payload: Dictionary mapping ticket_id -> datetime of last send.
+    """
+    serializable = {k: v.isoformat() for k, v in payload.items()}  # Convert datetimes to strings.
+    with open(path, "w", encoding="utf-8") as f:  # Open the file for writing.
+        json.dump(serializable, f, indent=2)  # Write pretty JSON for readability.
 
 # STATE_FILE = os.getenv("STATE_FILE", "seen_superstat_ticket_ids.json")
 # # The filename where we store ticket IDs we've "seen" before.
@@ -795,6 +850,10 @@ def main_loop() -> None:
     # print(f"State file: {STATE_FILE}")  # Print state file path.
     print(f"Teams webhook: {'enabled' if TEAMS_WEBHOOK_URL else 'disabled'}\n")  # Print whether Teams is enabled.
 
+    # Load the "last sent" map from disk so we remember cooldowns across restarts.
+    last_sent: Dict[str, datetime] = load_last_sent(LAST_SENT_FILE)  # ticket_id -> datetime when we last alerted.
+    print(f"Loaded {len(last_sent)} last-sent entries from {LAST_SENT_FILE}")  # Log how many entries were loaded.
+
     # NOTE (plain English):
     # We are NOT using the seen-state file mechanism in the runtime loop right now.
     # We are keeping all original comments and documentation, but we are removing the
@@ -809,13 +868,14 @@ def main_loop() -> None:
 
             tickets = search_tickets(token, statuses=sorted(ACTIVE_STATUSES), hours=MAX_AGE_HOURS)  # Search recent active tickets.
             print(f"Fetched {len(tickets)} ticket(s) from search endpoint.")  # Log how many were found.
-            # DEBUG: Save raw search response locally for inspection. Comment out when not needed.
-            debug_dump_path = f"search_results_{int(time.time())}.json"
-            with open(debug_dump_path, "w", encoding="utf-8") as f:
-                json.dump(tickets, f, indent=2)
-            print(f"Saved raw search results to {debug_dump_path}")
+            # # DEBUG: Save raw search response locally for inspection. Comment out when not needed.
+            # debug_dump_path = f"search_results_{int(time.time())}.json"
+            # with open(debug_dump_path, "w", encoding="utf-8") as f:
+            #     json.dump(tickets, f, indent=2)
+            # print(f"Saved raw search results to {debug_dump_path}")
 
             hits = 0  # Count how many alerts we send in this run.
+            sent_changed = False  # Track whether we updated the last-sent map (so we know when to save).
 
             for row in tickets:  # Process each ticket returned by the search.
                 tid = row.get("id")  # Extract ticket ID.
@@ -829,17 +889,26 @@ def main_loop() -> None:
                 # We already have all needed fields from the search payload, so avoid an extra API call.
                 details = row  # Use search row as "details" to keep downstream logic unchanged.
 
+                ticket_number = str(details.get("ticketNumber", "") or "")  # Get ticket number for display early (used in logs).
+
                 should, reason = should_alert(row, details)  # Decide if we should alert and why.
                 if not should:  # If we should NOT alert...
                     continue  # Move on to next ticket.
 
-                # CHANGE (explained in plain English):
-                # We do NOT skip tickets that are already in "seen".
-                # That means if the ticket is still matching, we will alert EVERY run.
+                # Cooldown check so we don't spam the same ticket too often.
+                now_local = datetime.now()  # Current local time (no timezone conversion needed for cooldown math).
+                last_time = last_sent.get(tid)  # When we last alerted on this ticket, if ever.
+                if last_time:
+                    elapsed = (now_local - last_time).total_seconds()  # Seconds since last alert for this ticket.
+                    if elapsed < NOTIFY_COOLDOWN_SECONDS:  # If not enough time has passed...
+                        wait_minutes = (NOTIFY_COOLDOWN_SECONDS - elapsed) / 60.0  # Minutes remaining before we can alert.
+                        print(
+                            f"Skip ticket {ticket_number} ({tid}) - cooldown in effect for another {wait_minutes:.1f} minutes."
+                        )  # Tell the operator why we skipped.
+                        continue  # Skip sending for this ticket.
 
                 hits += 1  # Increase the count of alerts we are sending.
 
-                ticket_number = str(details.get("ticketNumber", "") or "")  # Get ticket number for display.
                 web_url = details.get("webUrl", "") or row.get("webUrl", "") or ""  # Try details first, then search row.
                 subject_line = details.get("subject", "") or row.get("subject", "") or ""  # Try details first, then search row.
 
@@ -892,6 +961,10 @@ def main_loop() -> None:
                     print(f"ALERT: Ticket {ticket_number} ({tid}) -> posting to Teams...")  # Log Teams action.
                     post_to_teams(TEAMS_WEBHOOK_URL, teams_payload)  # Post card to Teams.
 
+                # Record the time we sent notifications for this ticket so we honor cooldowns next loop.
+                last_sent[tid] = now_local  # Save the current time for this ticket ID.
+                sent_changed = True  # Mark that we need to persist the updated map.
+
             # Cleanup seen list so it doesn't grow forever (keep only still-open tickets from this run)
             if os.getenv("CLEAN_SEEN", "1").strip() == "1":  # If CLEAN_SEEN is enabled (default yes)...
                 before = 0  # Count IDs before cleanup.
@@ -900,6 +973,10 @@ def main_loop() -> None:
                     print(f"Cleaned seen set: {before} -> {after}")  # Log the cleanup.
 
             # save_seen(set())  # Save the updated seen set to disk.
+
+            if sent_changed:  # If we changed the last-sent map during this loop...
+                save_last_sent(LAST_SENT_FILE, last_sent)  # Persist it so restarts keep the cooldown memory.
+                print(f"Saved last-sent map with {len(last_sent)} entries to {LAST_SENT_FILE}")  # Log the save.
 
             if hits == 0:  # If we did not alert on any tickets this run...
                 print("No NEW matching unresolved tickets found.")  # Note: wording says "NEW" but alerts can repeat.
