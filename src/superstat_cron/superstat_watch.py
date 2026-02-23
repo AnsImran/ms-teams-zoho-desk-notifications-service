@@ -22,7 +22,7 @@ import smtplib  # Lets us send email using an SMTP server.
 import ssl  # Lets us create secure encryption settings for email connections.
 from email.message import EmailMessage  # A helper class to build an email message cleanly.
 from typing import List, Dict, Any, Tuple, Optional  # Type hints: make code easier to understand.
-from datetime import datetime, timedelta  # Date/time handling and time differences.
+from datetime import datetime, timedelta, timezone  # Date/time handling and time differences.
 
 import pytz  # Time zone library (so we can work in Los Angeles time reliably).
 import requests  # Lets us make HTTP calls to Zoho APIs and Teams webhooks.
@@ -85,6 +85,15 @@ KEYWORD_RE = re.compile(KEYWORD_REGEX, re.IGNORECASE)
 
 ZOHO_ACCOUNTS_TOKEN_URL = os.getenv("ZOHO_ACCOUNTS_TOKEN_URL", "https://accounts.zoho.com/oauth/v2/token")
 # URL where we request a new access token from Zoho using a refresh token.
+
+# Simple in-memory cache so we don't refresh the Zoho access token every loop.
+TOKEN_CACHE: Dict[str, Any] = {
+    "token": None,         # Cached access token string.
+    "created_at": None,    # When we fetched it (UTC).
+    "expires_at": None,    # When it expires (UTC).
+}
+TOKEN_LIFETIME_SECONDS = 3600          # Zoho access tokens last for 1 hour.
+TOKEN_RENEW_GRACE_SECONDS = 10 * 60    # Refresh when less than 10 minutes remain.
 
 ZOHO_DESK_BASE = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")
 # Base URL for Zoho Desk API requests.
@@ -218,12 +227,13 @@ def created_time_range_la(hours: int) -> str:
 
 def get_access_token() -> str:
     """
-    Get a Zoho access token using a refresh token.
+    Get a Zoho access token using a refresh token, with caching.
 
     Lay-person explanation:
     - Zoho uses OAuth tokens.
     - A refresh token is long-lived and can be exchanged for a short-lived access token.
     - We need an access token to call Zoho Desk APIs.
+    - We cache the short-lived token and reuse it until ~10 minutes before expiry.
 
     Returns:
         Access token string.
@@ -232,6 +242,20 @@ def get_access_token() -> str:
         requests.HTTPError: If Zoho returns an error.
         KeyError: If the response does not contain "access_token".
     """
+    now_utc = datetime.now(timezone.utc)  # Use timezone-aware UTC to avoid deprecation warnings.
+
+    # Reuse the cached token if it is still safely valid.
+    if TOKEN_CACHE["token"] and TOKEN_CACHE["expires_at"]:
+        # Renew when less than TOKEN_RENEW_GRACE_SECONDS remain.
+        remaining = TOKEN_CACHE["expires_at"] - now_utc
+        if remaining > timedelta(seconds=TOKEN_RENEW_GRACE_SECONDS):
+            # Log how long the cached token remains valid.
+            print(
+                f"Reusing cached Zoho access token (expires in {remaining.total_seconds() / 60:.1f} minutes)."
+            )
+            return TOKEN_CACHE["token"]
+
+    # Otherwise, fetch a fresh token using the long-lived refresh token.
     r = requests.post(
         ZOHO_ACCOUNTS_TOKEN_URL,  # The token endpoint URL.
         data={
@@ -243,7 +267,19 @@ def get_access_token() -> str:
         timeout=30,  # Safety: don't hang forever if network is stuck.
     )
     r.raise_for_status()  # If HTTP status is 4xx/5xx, raise an exception.
-    return r.json()["access_token"]  # Extract the access token from the JSON response.
+    token = r.json()["access_token"]  # Extract the access token from the JSON response.
+
+    # Store token metadata so we can reuse it until close to expiry.
+    created_at = now_utc
+    expires_at = created_at + timedelta(seconds=TOKEN_LIFETIME_SECONDS)
+    TOKEN_CACHE.update({"token": token, "created_at": created_at, "expires_at": expires_at})
+
+    # Log the new token lifetime for visibility.
+    print(
+        f"Fetched new Zoho access token (valid for {(TOKEN_LIFETIME_SECONDS / 60):.0f} minutes)."
+    )
+
+    return token
 
 def desk_headers(token: str) -> Dict[str, str]:
     """
@@ -415,7 +451,7 @@ def format_email_body(
         A single plain-text string to use as the email body.
     """
     lines = []  # Start with an empty list of text lines (we'll join them at the end).
-    lines.append("SUPER-STAT REMINDER (Automated)")  # Add title line.
+    lines.append("SUPER-STAT REMINDER (Automated, sent from dev script)")  # Add title line.
     lines.append("-" * 72)  # Add a divider line.
     lines.append("This ticket is still NOT resolved and matched the alert rules.")  # Explain why email exists.
     lines.append(f"Matched because: {reason}")  # Explain which rule was matched.
@@ -785,6 +821,9 @@ def main_loop() -> None:
 
     while True:  # Infinite loop: script will run until you stop it.
         try:  # Catch errors so one failure doesn't kill the loop.
+            loop_started_at = datetime.now(timezone.utc)  # Track loop start time for debugging.
+            print(f"[loop] Starting cycle at {loop_started_at.isoformat()}")
+
             token = get_access_token()  # Get a fresh Zoho access token.
 
             tickets = search_tickets(token, statuses=sorted(ACTIVE_STATUSES), hours=MAX_AGE_HOURS)  # Search recent active tickets.
@@ -846,7 +885,7 @@ def main_loop() -> None:
                 send_email(email_subject, email_body)  # Send the email reminder.
 
                 if TEAMS_WEBHOOK_URL:  # Only do Teams posting if webhook URL is configured.
-                    title = "SUPER-STAT REMINDER"  # Card title.
+                    title = "SUPER-STAT REMINDER (Automated, sent from dev script)"  # Card title.
                     summary = f"Ticket {ticket_number} is still NOT resolved."  # Short summary line.
                     teams_payload = build_teams_adaptive_card(
                         title=title,  # Card title.
@@ -883,6 +922,7 @@ def main_loop() -> None:
         except Exception as e:  # Catch any error from the entire loop iteration...
             print("ERROR:", repr(e))  # Print the error so we know what went wrong.
 
+        print(f"[loop] Sleeping for {CHECK_EVERY_SECONDS} seconds...\n")
         time.sleep(CHECK_EVERY_SECONDS)  # Wait before checking again.
 
 if __name__ == "__main__":
