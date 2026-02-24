@@ -1,6 +1,6 @@
 ## 41-pacs-pros-automations
 
-Python . scripts for automations (Zoho Desk + reporting).
+Python scripts for automations (Zoho Desk + reporting).
 
 ## Local setup
 
