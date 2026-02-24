@@ -23,6 +23,7 @@ import ssl  # Lets us create secure encryption settings for email connections.
 from email.message import EmailMessage  # A helper class to build an email message cleanly.
 from typing import List, Dict, Any, Tuple, Optional  # Type hints: make code easier to understand.
 from datetime import datetime, timedelta, timezone  # Date/time handling and time differences.
+from concurrent.futures import ThreadPoolExecutor  # Run email + Teams notifications in parallel.
 
 import pytz  # Time zone library (so we can work in Los Angeles time reliably).
 import requests  # Lets us make HTTP calls to Zoho APIs and Teams webhooks.
@@ -100,6 +101,9 @@ LAST_SENT_FILE = os.getenv("LAST_SENT_FILE", "sent_notifications.json")
 
 NOTIFY_COOLDOWN_SECONDS = int(os.getenv("NOTIFY_COOLDOWN_SECONDS", str(5 * 60)))
 # Minimum time that must pass before we send another notification for the same ticket (default 5 minutes).
+
+NOTIFY_WORKERS = int(os.getenv("NOTIFY_WORKERS", "2"))
+# Size of the thread pool used to send notifications concurrently (email + Teams).
 
 ZOHO_DESK_BASE = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")
 # Base URL for Zoho Desk API requests.
@@ -867,144 +871,153 @@ def main_loop() -> None:
     # We are keeping all original comments and documentation, but we are removing the
     # runtime dependency on "seen", "still_open", "cleared", and CLEAN_SEEN cleanup.
 
-    while True:  # Infinite loop: script will run until you stop it.
-        try:  # Catch errors so one failure doesn't kill the loop.
-            loop_started_at = datetime.now(timezone.utc)  # Track loop start time for debugging.
-            print(f"[loop] Starting cycle at {loop_started_at.isoformat()}")
+    # Thread pool lets email + Teams notifications run in parallel per ticket.
+    with ThreadPoolExecutor(max_workers=NOTIFY_WORKERS) as executor:
+        while True:  # Infinite loop: script will run until you stop it.
+            try:  # Catch errors so one failure doesn't kill the loop.
+                loop_started_at = datetime.now(timezone.utc)  # Track loop start time for debugging.
+                print(f"[loop] Starting cycle at {loop_started_at.isoformat()}")
 
-            token = get_access_token()  # Get a fresh Zoho access token.
+                token = get_access_token()  # Get a fresh Zoho access token.
 
-            tickets = search_tickets(token, statuses=sorted(ACTIVE_STATUSES), hours=MAX_AGE_HOURS)  # Search recent active tickets.
-            print(f"Fetched {len(tickets)} ticket(s) from search endpoint.")  # Log how many were found.
-            # # DEBUG: Save raw search response locally for inspection. Comment out when not needed.
-            # debug_dump_path = f"search_results_{int(time.time())}.json"
-            # with open(debug_dump_path, "w", encoding="utf-8") as f:
-            #     json.dump(tickets, f, indent=2)
-            # print(f"Saved raw search results to {debug_dump_path}")
+                tickets = search_tickets(token, statuses=sorted(ACTIVE_STATUSES), hours=MAX_AGE_HOURS)  # Search recent active tickets.
+                print(f"Fetched {len(tickets)} ticket(s) from search endpoint.")  # Log how many were found.
+                # # DEBUG: Save raw search response locally for inspection. Comment out when not needed.
+                # debug_dump_path = f"search_results_{int(time.time())}.json"
+                # with open(debug_dump_path, "w", encoding="utf-8") as f:
+                #     json.dump(tickets, f, indent=2)
+                # print(f"Saved raw search results to {debug_dump_path}")
 
-            hits = 0  # Count how many alerts we send in this run.
-            sent_changed = False  # Track whether we updated the last-sent map (so we know when to save).
+                hits = 0  # Count how many alerts we send in this run.
+                sent_changed = False  # Track whether we updated the last-sent map (so we know when to save).
 
-            for row in tickets:  # Process each ticket returned by the search.
-                tid = row.get("id")  # Extract ticket ID.
-                if not tid:  # If ticket has no ID for some reason...
-                    continue  # Skip it because we cannot fetch details without an ID.
+                for row in tickets:  # Process each ticket returned by the search.
+                    tid = row.get("id")  # Extract ticket ID.
+                    if not tid:  # If ticket has no ID for some reason...
+                        continue  # Skip it because we cannot fetch details without an ID.
 
-                row_status = (row.get("status") or "").strip()  # Read the status from search row.
-                if row_status and row_status not in ACTIVE_STATUSES:  # If status isn't one we care about...
-                    continue  # Skip it.
+                    row_status = (row.get("status") or "").strip()  # Read the status from search row.
+                    if row_status and row_status not in ACTIVE_STATUSES:  # If status isn't one we care about...
+                        continue  # Skip it.
 
-                # We already have all needed fields from the search payload, so avoid an extra API call.
-                details = row  # Use search row as "details" to keep downstream logic unchanged.
+                    # We already have all needed fields from the search payload, so avoid an extra API call.
+                    details = row  # Use search row as "details" to keep downstream logic unchanged.
 
-                ticket_number = str(details.get("ticketNumber", "") or "")  # Get ticket number for display early (used in logs).
-                subject_line = details.get("subject", "") or row.get("subject", "") or ""  # Pull subject early for both matching and routing.
-                description_text = details.get("description") or details.get("descriptionText") or ""  # Pull description text if present.
+                    ticket_number = str(details.get("ticketNumber", "") or "")  # Get ticket number for display early (used in logs).
+                    subject_line = details.get("subject", "") or row.get("subject", "") or ""  # Pull subject early for both matching and routing.
+                    description_text = details.get("description") or details.get("descriptionText") or ""  # Pull description text if present.
 
-                should, reason = should_alert(row, details)  # Decide if we should alert and why.
-                if not should:  # If we should NOT alert...
-                    continue  # Move on to next ticket.
+                    should, reason = should_alert(row, details)  # Decide if we should alert and why.
+                    if not should:  # If we should NOT alert...
+                        continue  # Move on to next ticket.
 
-                # Cooldown check so we don't spam the same ticket too often.
-                now_local = datetime.now()  # Current local time (no timezone conversion needed for cooldown math).
-                last_time = last_sent.get(tid)  # When we last alerted on this ticket, if ever.
-                if last_time:
-                    elapsed = (now_local - last_time).total_seconds()  # Seconds since last alert for this ticket.
-                    if elapsed < NOTIFY_COOLDOWN_SECONDS:  # If not enough time has passed...
-                        wait_minutes = (NOTIFY_COOLDOWN_SECONDS - elapsed) / 60.0  # Minutes remaining before we can alert.
-                        print(
-                            f"Skip ticket {ticket_number} ({tid}) - cooldown in effect for another {wait_minutes:.1f} minutes."
-                        )  # Tell the operator why we skipped.
-                        continue  # Skip sending for this ticket.
+                    # Cooldown check so we don't spam the same ticket too often.
+                    now_local = datetime.now()  # Current local time (no timezone conversion needed for cooldown math).
+                    last_time = last_sent.get(tid)  # When we last alerted on this ticket, if ever.
+                    if last_time:
+                        elapsed = (now_local - last_time).total_seconds()  # Seconds since last alert for this ticket.
+                        if elapsed < NOTIFY_COOLDOWN_SECONDS:  # If not enough time has passed...
+                            wait_minutes = (NOTIFY_COOLDOWN_SECONDS - elapsed) / 60.0  # Minutes remaining before we can alert.
+                            print(
+                                f"Skip ticket {ticket_number} ({tid}) - cooldown in effect for another {wait_minutes:.1f} minutes."
+                            )  # Tell the operator why we skipped.
+                            continue  # Skip sending for this ticket.
 
-                hits += 1  # Increase the count of alerts we are sending.
+                    hits += 1  # Increase the count of alerts we are sending.
 
-                web_url = details.get("webUrl", "") or row.get("webUrl", "") or ""  # Try details first, then search row.
-                created_raw = details.get("createdTime", "")  # Get ticket created time as raw string.
-                try:
-                    created_la = parse_zoho_time_assume_la(created_raw)  # Parse created time, convert to LA.
-                    age_minutes = int((now_la() - created_la).total_seconds() // 60)  # Compute age in minutes.
-                    created_display = created_la.strftime("%Y-%m-%d %H:%M:%S %Z")  # Format time nicely for display.
-                except Exception:
-                    age_minutes = -1  # Use -1 to indicate unknown age.
-                    created_display = created_raw or "(unknown)"  # Fall back to raw string or placeholder.
+                    web_url = details.get("webUrl", "") or row.get("webUrl", "") or ""  # Try details first, then search row.
+                    created_raw = details.get("createdTime", "")  # Get ticket created time as raw string.
+                    try:
+                        created_la = parse_zoho_time_assume_la(created_raw)  # Parse created time, convert to LA.
+                        age_minutes = int((now_la() - created_la).total_seconds() // 60)  # Compute age in minutes.
+                        created_display = created_la.strftime("%Y-%m-%d %H:%M:%S %Z")  # Format time nicely for display.
+                    except Exception:
+                        age_minutes = -1  # Use -1 to indicate unknown age.
+                        created_display = created_raw or "(unknown)"  # Fall back to raw string or placeholder.
 
-                email_subject = f"[Super-STAT REMINDER] Ticket {ticket_number} still NOT resolved"
-                # Create a clear subject line for the email reminder.
+                    email_subject = f"[Super-STAT REMINDER] Ticket {ticket_number} still NOT resolved"
+                    # Create a clear subject line for the email reminder.
 
-                email_body = format_email_body(
-                    ticket_id=str(tid),  # Ticket ID.
-                    ticket_number=ticket_number,  # Ticket number.
-                    subject_line=subject_line,  # Ticket subject.
-                    status=str(details.get("status", "") or ""),  # Ticket status.
-                    status_type=str(details.get("statusType", "") or ""),  # Ticket status type.
-                    created_display=created_display,  # Created time in LA format.
-                    age_minutes=age_minutes,  # Age in minutes.
-                    web_url=web_url,  # Link to the ticket.
-                    reason=reason,  # Explanation of match.
-                )
-                # The above block builds the entire email body in a neat format.
-
-                print(f"ALERT: Ticket {ticket_number} ({tid}) -> emailing... reason={reason}")  # Log alert action.
-                send_email(email_subject, email_body)  # Send the email reminder.
-
-                if TEAMS_WEBHOOK_URL:  # Only do Teams posting if webhook URL is configured.
-                    title = "SUPER-STAT REMINDER (Automated)"  # Card title.
-                    summary = f"Ticket {ticket_number} is still NOT resolved."  # Short summary line.
-                    teams_payload = build_teams_adaptive_card(
-                        title=title,  # Card title.
-                        summary=summary,  # Card summary.
-                        ticket_number=ticket_number,  # Ticket number.
+                    email_body = format_email_body(
                         ticket_id=str(tid),  # Ticket ID.
-                        subject_line=subject_line,  # Subject line.
-                        status=str(details.get("status", "") or ""),  # Status.
-                        status_type=str(details.get("statusType", "") or ""),  # Status type.
-                        created_display=created_display,  # Created time display.
-                        age_minutes=age_minutes,  # Age.
-                        reason=reason,  # Why this matched.
-                        web_url=web_url,  # Link to ticket.
+                        ticket_number=ticket_number,  # Ticket number.
+                        subject_line=subject_line,  # Ticket subject.
+                        status=str(details.get("status", "") or ""),  # Ticket status.
+                        status_type=str(details.get("statusType", "") or ""),  # Ticket status type.
+                        created_display=created_display,  # Created time in LA format.
+                        age_minutes=age_minutes,  # Age in minutes.
+                        web_url=web_url,  # Link to the ticket.
+                        reason=reason,  # Explanation of match.
                     )
-                    # The above builds the Teams Adaptive Card JSON.
+                    # The above block builds the entire email body in a neat format.
 
-                    # Choose which webhook to use: special test webhook if magic phrase is present; otherwise normal env webhook.
-                    combined_text = f"{subject_line} {description_text}"  # Combine subject + description.
-                    lowered_text = combined_text.lower() if isinstance(combined_text, str) else ""  # Normalize for search.
-                    use_magic_webhook = "test ticket by magic ai" in lowered_text  # True only if the exact phrase is present.
-                    target_webhook = MAGIC_TEST_WEBHOOK if use_magic_webhook else TEAMS_WEBHOOK_URL  # Pick webhook based on phrase.
+                    print(f"ALERT: Ticket {ticket_number} ({tid}) -> emailing... reason={reason}")  # Log alert action.
 
-                    print(
-                        f"ALERT: Ticket {ticket_number} ({tid}) -> posting to Teams..."
-                        f"{' (magic test webhook)' if use_magic_webhook else ''}"
-                    )  # Log Teams action with note if using test webhook.
-                    post_to_teams(target_webhook, teams_payload)  # Post card to the chosen webhook.
+                    # Kick off email (and optionally Teams) in parallel threads.
+                    futures = [executor.submit(send_email, email_subject, email_body)]
 
-                # Record the time we sent notifications for this ticket so we honor cooldowns next loop.
-                last_sent[tid] = now_local  # Save the current time for this ticket ID.
-                sent_changed = True  # Mark that we need to persist the updated map.
+                    if TEAMS_WEBHOOK_URL:  # Only do Teams posting if webhook URL is configured.
+                        title = "SUPER-STAT REMINDER (Automated)"  # Card title.
+                        summary = f"Ticket {ticket_number} is still NOT resolved."  # Short summary line.
+                        teams_payload = build_teams_adaptive_card(
+                            title=title,  # Card title.
+                            summary=summary,  # Card summary.
+                            ticket_number=ticket_number,  # Ticket number.
+                            ticket_id=str(tid),  # Ticket ID.
+                            subject_line=subject_line,  # Subject line.
+                            status=str(details.get("status", "") or ""),  # Status.
+                            status_type=str(details.get("statusType", "") or ""),  # Status type.
+                            created_display=created_display,  # Created time display.
+                            age_minutes=age_minutes,  # Age.
+                            reason=reason,  # Why this matched.
+                            web_url=web_url,  # Link to ticket.
+                        )
+                        # The above builds the Teams Adaptive Card JSON.
 
-            # Cleanup seen list so it doesn't grow forever (keep only still-open tickets from this run)
-            if os.getenv("CLEAN_SEEN", "1").strip() == "1":  # If CLEAN_SEEN is enabled (default yes)...
-                before = 0  # Count IDs before cleanup.
-                after = 0  # Count IDs after cleanup.
-                if after != before:  # If something changed...
-                    print(f"Cleaned seen set: {before} -> {after}")  # Log the cleanup.
+                        # Choose which webhook to use: special test webhook if magic phrase is present; otherwise normal env webhook.
+                        combined_text = f"{subject_line} {description_text}"  # Combine subject + description.
+                        lowered_text = combined_text.lower() if isinstance(combined_text, str) else ""  # Normalize for search.
+                        use_magic_webhook = "test ticket by magic ai" in lowered_text  # True only if the exact phrase is present.
+                        target_webhook = MAGIC_TEST_WEBHOOK if use_magic_webhook else TEAMS_WEBHOOK_URL  # Pick webhook based on phrase.
 
-            # save_seen(set())  # Save the updated seen set to disk.
+                        print(
+                            f"ALERT: Ticket {ticket_number} ({tid}) -> posting to Teams..."
+                            f"{' (magic test webhook)' if use_magic_webhook else ''}"
+                        )  # Log Teams action with note if using test webhook.
 
-            if sent_changed:  # If we changed the last-sent map during this loop...
-                save_last_sent(LAST_SENT_FILE, last_sent)  # Persist it so restarts keep the cooldown memory.
-                print(f"Saved last-sent map with {len(last_sent)} entries to {LAST_SENT_FILE}")  # Log the save.
+                        futures.append(executor.submit(post_to_teams, target_webhook, teams_payload))
 
-            if hits == 0:  # If we did not alert on any tickets this run...
-                print("No NEW matching unresolved tickets found.")  # Note: wording says "NEW" but alerts can repeat.
-            else:
-                print(f"Sent {hits} reminder email(s) (+ Teams if enabled).")  # Log alert count.
+                    # Wait for all queued notifications to finish (raises if any failed).
+                    for fut in futures:
+                        fut.result()
 
-        except Exception as e:  # Catch any error from the entire loop iteration...
-            print("ERROR:", repr(e))  # Print the error so we know what went wrong.
+                    # Record the time we sent notifications for this ticket so we honor cooldowns next loop.
+                    last_sent[tid] = now_local  # Save the current time for this ticket ID.
+                    sent_changed = True  # Mark that we need to persist the updated map.
 
-        print(f"[loop] Sleeping for {CHECK_EVERY_SECONDS} seconds...\n")
-        time.sleep(CHECK_EVERY_SECONDS)  # Wait before checking again.
+                # Cleanup seen list so it doesn't grow forever (keep only still-open tickets from this run)
+                if os.getenv("CLEAN_SEEN", "1").strip() == "1":  # If CLEAN_SEEN is enabled (default yes)...
+                    before = 0  # Count IDs before cleanup.
+                    after = 0  # Count IDs after cleanup.
+                    if after != before:  # If something changed...
+                        print(f"Cleaned seen set: {before} -> {after}")  # Log the cleanup.
+
+                # save_seen(set())  # Save the updated seen set to disk.
+
+                if sent_changed:  # If we changed the last-sent map during this loop...
+                    save_last_sent(LAST_SENT_FILE, last_sent)  # Persist it so restarts keep the cooldown memory.
+                    print(f"Saved last-sent map with {len(last_sent)} entries to {LAST_SENT_FILE}")  # Log the save.
+
+                if hits == 0:  # If we did not alert on any tickets this run...
+                    print("No NEW matching unresolved tickets found.")  # Note: wording says "NEW" but alerts can repeat.
+                else:
+                    print(f"Sent {hits} reminder email(s) (+ Teams if enabled).")  # Log alert count.
+
+            except Exception as e:  # Catch any error from the entire loop iteration...
+                print("ERROR:", repr(e))  # Print the error so we know what went wrong.
+
+            print(f"[loop] Sleeping for {CHECK_EVERY_SECONDS} seconds...\n")
+            time.sleep(CHECK_EVERY_SECONDS)  # Wait before checking again.
 
 if __name__ == "__main__":
     # This means: "If this file is being run directly (not imported), start the main loop."
