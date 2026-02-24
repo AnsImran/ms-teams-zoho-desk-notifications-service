@@ -852,6 +852,16 @@ def main_loop() -> None:
       5) Clean up the "seen" list so it doesn't grow forever
       6) Sleep until next run
     """
+    # At startup, delete any existing last-sent file so we always begin fresh.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    last_sent_path = os.path.join(script_dir, LAST_SENT_FILE)
+    if os.path.exists(last_sent_path):
+        try:
+            os.remove(last_sent_path)
+            print(f"Startup cleanup: removed {last_sent_path}")
+        except Exception as e:
+            print(f"WARNING: Could not delete last-sent file {last_sent_path}: {e}")
+
     print(f"Timezone: {TZ_NAME}")  # Print timezone setting.
     print(f"Watching statuses: {', '.join(sorted(ACTIVE_STATUSES))}")  # Print active statuses being watched.
     print(f"Search window: last {MAX_AGE_HOURS} hours via createdTimeRange (LA window -> UTC Z for Zoho)")  # Print age window.
@@ -863,8 +873,8 @@ def main_loop() -> None:
     print(f"Teams webhook: {'enabled' if TEAMS_WEBHOOK_URL else 'disabled'}\n")  # Print whether Teams is enabled.
 
     # Load the "last sent" map from disk so we remember cooldowns across restarts.
-    last_sent: Dict[str, datetime] = load_last_sent(LAST_SENT_FILE)  # ticket_id -> datetime when we last alerted.
-    print(f"Loaded {len(last_sent)} last-sent entries from {LAST_SENT_FILE}")  # Log how many entries were loaded.
+    last_sent: Dict[str, datetime] = load_last_sent(last_sent_path)  # ticket_id -> datetime when we last alerted.
+    print(f"Loaded {len(last_sent)} last-sent entries from {last_sent_path}")  # Log how many entries were loaded.
 
     # NOTE (plain English):
     # We are NOT using the seen-state file mechanism in the runtime loop right now.
@@ -1005,8 +1015,8 @@ def main_loop() -> None:
                 # save_seen(set())  # Save the updated seen set to disk.
 
                 if sent_changed:  # If we changed the last-sent map during this loop...
-                    save_last_sent(LAST_SENT_FILE, last_sent)  # Persist it so restarts keep the cooldown memory.
-                    print(f"Saved last-sent map with {len(last_sent)} entries to {LAST_SENT_FILE}")  # Log the save.
+                    save_last_sent(last_sent_path, last_sent)  # Persist it so restarts keep the cooldown memory.
+                    print(f"Saved last-sent map with {len(last_sent)} entries to {last_sent_path}")  # Log the save.
 
                 if hits == 0:  # If we did not alert on any tickets this run...
                     print("No NEW matching unresolved tickets found.")  # Note: wording says "NEW" but alerts can repeat.
