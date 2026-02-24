@@ -115,6 +115,14 @@ TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL", "").strip()
 # If set, we send alerts to Microsoft Teams via an incoming webhook.
 # If blank, Teams posting is skipped.
 
+MAGIC_TEST_WEBHOOK = (
+    "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/"
+    "powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke"
+    "?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM"
+)
+# Special webhook used only for test tickets that contain the magic phrase.
+# Hard-coded as requested; used instead of TEAMS_WEBHOOK_URL when triggered.
+
 # -----------------------------
 # Helpers (small utility functions)
 # -----------------------------
@@ -506,7 +514,7 @@ def format_email_body(
         A single plain-text string to use as the email body.
     """
     lines = []  # Start with an empty list of text lines (we'll join them at the end).
-    lines.append("SUPER-STAT REMINDER (Automated, sent from dev script)")  # Add title line.
+    lines.append("SUPER-STAT REMINDER (Automated)")  # Add title line.
     lines.append("-" * 72)  # Add a divider line.
     lines.append("This ticket is still NOT resolved and matched the alert rules.")  # Explain why email exists.
     lines.append(f"Matched because: {reason}")  # Explain which rule was matched.
@@ -890,6 +898,8 @@ def main_loop() -> None:
                 details = row  # Use search row as "details" to keep downstream logic unchanged.
 
                 ticket_number = str(details.get("ticketNumber", "") or "")  # Get ticket number for display early (used in logs).
+                subject_line = details.get("subject", "") or row.get("subject", "") or ""  # Pull subject early for both matching and routing.
+                description_text = details.get("description") or details.get("descriptionText") or ""  # Pull description text if present.
 
                 should, reason = should_alert(row, details)  # Decide if we should alert and why.
                 if not should:  # If we should NOT alert...
@@ -910,8 +920,6 @@ def main_loop() -> None:
                 hits += 1  # Increase the count of alerts we are sending.
 
                 web_url = details.get("webUrl", "") or row.get("webUrl", "") or ""  # Try details first, then search row.
-                subject_line = details.get("subject", "") or row.get("subject", "") or ""  # Try details first, then search row.
-
                 created_raw = details.get("createdTime", "")  # Get ticket created time as raw string.
                 try:
                     created_la = parse_zoho_time_assume_la(created_raw)  # Parse created time, convert to LA.
@@ -941,7 +949,7 @@ def main_loop() -> None:
                 send_email(email_subject, email_body)  # Send the email reminder.
 
                 if TEAMS_WEBHOOK_URL:  # Only do Teams posting if webhook URL is configured.
-                    title = "SUPER-STAT REMINDER (Automated, sent from dev script)"  # Card title.
+                    title = "SUPER-STAT REMINDER (Automated)"  # Card title.
                     summary = f"Ticket {ticket_number} is still NOT resolved."  # Short summary line.
                     teams_payload = build_teams_adaptive_card(
                         title=title,  # Card title.
@@ -958,8 +966,17 @@ def main_loop() -> None:
                     )
                     # The above builds the Teams Adaptive Card JSON.
 
-                    print(f"ALERT: Ticket {ticket_number} ({tid}) -> posting to Teams...")  # Log Teams action.
-                    post_to_teams(TEAMS_WEBHOOK_URL, teams_payload)  # Post card to Teams.
+                    # Choose which webhook to use: special test webhook if magic phrase is present; otherwise normal env webhook.
+                    combined_text = f"{subject_line} {description_text}"  # Combine subject + description.
+                    lowered_text = combined_text.lower() if isinstance(combined_text, str) else ""  # Normalize for search.
+                    use_magic_webhook = "test ticket by magic ai" in lowered_text  # True only if the exact phrase is present.
+                    target_webhook = MAGIC_TEST_WEBHOOK if use_magic_webhook else TEAMS_WEBHOOK_URL  # Pick webhook based on phrase.
+
+                    print(
+                        f"ALERT: Ticket {ticket_number} ({tid}) -> posting to Teams..."
+                        f"{' (magic test webhook)' if use_magic_webhook else ''}"
+                    )  # Log Teams action with note if using test webhook.
+                    post_to_teams(target_webhook, teams_payload)  # Post card to the chosen webhook.
 
                 # Record the time we sent notifications for this ticket so we honor cooldowns next loop.
                 last_sent[tid] = now_local  # Save the current time for this ticket ID.
