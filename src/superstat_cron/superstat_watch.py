@@ -29,9 +29,9 @@ SUPERSTAT_CONFIG = ProductConfig(  # Package all Super-Stat settings together.
 )  # Finished building Super-Stat config.
 
 
-def run_cycle(token: str) -> None:  # Run one Super-Stat watch cycle using a shared token.
+def run_cycle(token: str, pre_fetched_tickets=None) -> None:  # Run one Super-Stat watch cycle using a shared token and optional tickets.
     """Run one pass of the Super-Stat watcher with a provided Zoho token."""  # Docstring in simple terms.
-    run_product_loop_once(SUPERSTAT_CONFIG, token)  # Delegate all heavy lifting to the shared helper.
+    run_product_loop_once(SUPERSTAT_CONFIG, token, pre_fetched_tickets=pre_fetched_tickets)  # Delegate all heavy lifting to the shared helper.
 
 
 if __name__ == "__main__":  # Allow this file to be run directly for quick testing.

@@ -29,7 +29,8 @@ MIN_AGE_MINUTES_DEFAULT = int(os.getenv("MIN_AGE_MINUTES", "5"))  # Default mini
 PAGE_LIMIT = int(os.getenv("PAGE_LIMIT", "50"))  # Hard cap on search pages to avoid endless loops.
 PAGE_SIZE = int(os.getenv("PAGE_SIZE", "100"))  # Page size for Zoho search calls.
 NOTIFY_COOLDOWN_SECONDS = int(os.getenv("NOTIFY_COOLDOWN_SECONDS", str(5 * 60)))  # Cooldown per ticket before re-alert.
-NOTIFY_WORKERS = int(os.getenv("NOTIFY_WORKERS", "2"))  # Thread count when posting to Teams.
+NOTIFY_WORKERS_RAW = os.getenv("NOTIFY_WORKERS", "").strip()  # Raw env value for notify worker count (may be blank).
+NOTIFY_WORKERS = int(NOTIFY_WORKERS_RAW) if NOTIFY_WORKERS_RAW else None  # Worker count for Teams posts; None lets Python choose.
 ZOHO_DESK_BASE = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")  # Base URL for Zoho Desk.
 ZOHO_ACCOUNTS_TOKEN_URL = os.getenv("ZOHO_ACCOUNTS_TOKEN_URL", "https://accounts.zoho.com/oauth/v2/token")  # Token endpoint.
 
@@ -366,12 +367,14 @@ def run_single_product_cycle(  # Run all steps for one product in a single cycle
     token: str,  # Shared Zoho access token.
     compiled_regex: re.Pattern,  # Compiled regex for keyword matches.
     last_sent: Dict[str, datetime],  # Cooldown memory map.
+    pre_fetched_tickets: List[Dict[str, Any]] = None,  # Optional shared tickets list to avoid extra fetch.
 ) -> Tuple[int, bool]:  # Return count of hits and whether state changed.
     """Process one polling cycle for a product; return (hits, changed_flag)."""  # Clear docstring.
     hits = 0  # Count how many alerts we send.
     sent_changed = False  # Track whether we update cooldown file.
-    tickets = search_tickets(token, statuses=sorted(config.active_statuses), hours=config.max_age_hours)  # Fetch tickets.
-    print(f"[{config.name}] Fetched {len(tickets)} ticket(s) from search endpoint.")  # Log count for this product.
+    tickets = pre_fetched_tickets if pre_fetched_tickets is not None else search_tickets(token, statuses=sorted(config.active_statuses), hours=config.max_age_hours)  # Use shared tickets or fetch our own.
+    if pre_fetched_tickets is None:  # Only log fetch count when this product performed the fetch.
+        print(f"[{config.name}] Fetched {len(tickets)} ticket(s) from search endpoint.")  # Log count for this product.
     with ThreadPoolExecutor(max_workers=NOTIFY_WORKERS) as executor:  # Spin up thread pool for webhook posts.
         for ticket in tickets:  # Handle each ticket row.
             ticket_id = ticket.get("id")  # Pull ticket id.
@@ -380,6 +383,17 @@ def run_single_product_cycle(  # Run all steps for one product in a single cycle
             status = (ticket.get("status") or "").strip()  # Read status text.
             if status and status not in config.active_statuses:  # If status not watched...
                 continue  # Skip.
+            created_raw = ticket.get("createdTime", "")  # Raw created timestamp.
+            try:  # Try to parse created time.
+                created_la = parse_zoho_time_assume_la(created_raw)  # Parse into LA time.
+                age_minutes = int((now_la() - created_la).total_seconds() // 60)  # Age in minutes.
+                created_display = created_la.strftime("%Y-%m-%d %H:%M:%S %Z")  # Nice display string.
+            except Exception:  # If parsing fails...
+                created_la = None  # Mark as unknown time.
+                age_minutes = -1  # Unknown age marker.
+                created_display = created_raw or "(unknown)"  # Fallback display.
+            if created_la and created_la < now_la() - timedelta(hours=config.max_age_hours):  # If ticket is older than this product's window...
+                continue  # Skip because it is outside the product window.
             should, reason = should_alert(ticket, compiled_regex, config.target_product_names, config.min_age_minutes)  # Decide alert.
             if not should:  # If no alert...
                 continue  # Skip to next ticket.
@@ -395,14 +409,6 @@ def run_single_product_cycle(  # Run all steps for one product in a single cycle
             subject_line = ticket.get("subject", "") or ""  # Read subject.
             description_text = ticket.get("description") or ticket.get("descriptionText") or ""  # Read description text.
             web_url = ticket.get("webUrl", "") or ""  # Read web URL for button.
-            created_raw = ticket.get("createdTime", "")  # Raw created timestamp.
-            try:  # Try to parse created time.
-                created_la = parse_zoho_time_assume_la(created_raw)  # Parse into LA time.
-                age_minutes = int((now_la() - created_la).total_seconds() // 60)  # Age in minutes.
-                created_display = created_la.strftime("%Y-%m-%d %H:%M:%S %Z")  # Nice display string.
-            except Exception:  # If parsing fails...
-                age_minutes = -1  # Unknown age marker.
-                created_display = created_raw or "(unknown)"  # Fallback display.
             print(f"[{config.name}] ALERT: Ticket {ticket_number} ({ticket_id}) reason={reason}")  # Log alert intent.
             teams_payload = build_teams_adaptive_card(  # Build Teams payload once.
                 title=f"{config.name.upper()} REMINDER (Automated)",  # Title with product name.
@@ -433,7 +439,7 @@ def run_single_product_cycle(  # Run all steps for one product in a single cycle
 # Convenience runner that handles state files
 # -----------------------------
 
-def run_product_loop_once(config: ProductConfig, token: str) -> None:  # Wrapper that loads/saves cooldown file per cycle.
+def run_product_loop_once(config: ProductConfig, token: str, pre_fetched_tickets: List[Dict[str, Any]] = None) -> None:  # Wrapper that loads/saves cooldown file per cycle.
     """Run one product cycle with state load/save and friendly logs."""  # Docstring.
     script_dir = os.path.dirname(os.path.abspath(__file__))  # Current folder path.
     last_sent_path = os.path.join(script_dir, config.last_sent_filename)  # Path to cooldown file.
@@ -446,6 +452,7 @@ def run_product_loop_once(config: ProductConfig, token: str) -> None:  # Wrapper
         token=token,  # Pass the shared Zoho token.
         compiled_regex=compiled_regex,  # Pass compiled regex.
         last_sent=last_sent,  # Pass cooldown memory.
+        pre_fetched_tickets=pre_fetched_tickets,  # Pass shared tickets if present.
     )  # End cycle call.
     if changed:  # If cooldown map changed...
         save_last_sent(last_sent_path, last_sent)  # Persist updates.

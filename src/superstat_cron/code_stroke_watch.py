@@ -29,9 +29,9 @@ CODE_STROKE_CONFIG = ProductConfig(  # Bundle all Code Stroke settings together.
 )  # Finished building Code Stroke config.
 
 
-def run_cycle(token: str) -> None:  # Run one Code Stroke watch cycle.
+def run_cycle(token: str, pre_fetched_tickets=None) -> None:  # Run one Code Stroke watch cycle.
     """Run one pass of the Code Stroke watcher using the provided Zoho token."""  # Docstring in clear language.
-    run_product_loop_once(CODE_STROKE_CONFIG, token)  # Delegate to the shared helper.
+    run_product_loop_once(CODE_STROKE_CONFIG, token, pre_fetched_tickets=pre_fetched_tickets)  # Delegate to the shared helper.
 
 
 if __name__ == "__main__":  # Let this module run directly for quick checks.
