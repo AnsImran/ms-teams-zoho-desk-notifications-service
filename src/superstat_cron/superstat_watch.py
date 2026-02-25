@@ -12,24 +12,22 @@
 # - It looks back over tickets created in the last N hours (default: 24 hours).
 # - It will alert EVERY time the script runs if the ticket still matches (not just once).
 # - It keeps a small "seen" state file mainly so it can clean up IDs of resolved tickets.
+# NOTE: Email notifications are currently disabled/commented out; only Teams alerts will send.
 # ------------------------------------------------------------------------------------
 
 import os  # Lets us read environment variables and work with files/paths.
 import time  # Lets us pause the program between checks (sleep).
 import json  # Lets us store and read data in JSON format (the "seen tickets" file).
 import re  # Lets us search for keywords using regular expressions (pattern matching).
-import smtplib  # Lets us send email using an SMTP server.
-import ssl  # Lets us create secure encryption settings for email connections.
-from email.message import EmailMessage  # A helper class to build an email message cleanly.
 from typing import List, Dict, Any, Tuple, Optional  # Type hints: make code easier to understand.
 from datetime import datetime, timedelta, timezone  # Date/time handling and time differences.
-from concurrent.futures import ThreadPoolExecutor  # Run email + Teams notifications in parallel.
+from concurrent.futures import ThreadPoolExecutor  # Run Teams notifications in parallel.
 
 import pytz  # Time zone library (so we can work in Los Angeles time reliably).
 import requests  # Lets us make HTTP calls to Zoho APIs and Teams webhooks.
 from dotenv import load_dotenv  # Loads variables from a .env file into environment variables.
 
-import certifi
+# import certifi
 
 
 
@@ -96,7 +94,7 @@ NOTIFY_COOLDOWN_SECONDS = int(os.getenv("NOTIFY_COOLDOWN_SECONDS", str(5 * 60)))
 # Minimum time that must pass before we send another notification for the same ticket (default 5 minutes).
 
 NOTIFY_WORKERS = int(os.getenv("NOTIFY_WORKERS", "2"))
-# Size of the thread pool used to send notifications concurrently (email + Teams).
+# Size of the thread pool used to send notifications concurrently (Teams).
 
 ZOHO_DESK_BASE = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")
 # Base URL for Zoho Desk API requests.
@@ -112,13 +110,10 @@ TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL", "").strip()
 # If set, we send alerts to Microsoft Teams via an incoming webhook.
 # If blank, Teams posting is skipped.
 
-MAGIC_TEST_WEBHOOK = (
-    "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/"
-    "powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke"
-    "?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM"
-)
+MAGIC_TEST_WEBHOOK = "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM"
 # Special webhook used only for test tickets that contain the magic phrase.
 # Hard-coded as requested; used instead of TEAMS_WEBHOOK_URL when triggered.
+MAGIC_TRIGGER = os.getenv("MAGIC_TEST_TRIGGER_PHRASE", "test ticket by magic ai").strip().lower()
 
 # -----------------------------
 # Helpers (small utility functions)
@@ -365,106 +360,6 @@ def save_last_sent(path: str, payload: Dict[str, datetime]) -> None:
     with open(path, "w", encoding="utf-8") as f:  # Open the file for writing.
         json.dump(serializable, f, indent=2)  # Write pretty JSON for readability.
 
-# STATE_FILE = os.getenv("STATE_FILE", "seen_superstat_ticket_ids.json")
-# # The filename where we store ticket IDs we've "seen" before.
-# # If the environment variable STATE_FILE is not set, we use the default file name shown above.
-
-# def load_seen() -> set:
-#     """
-#     Load the "seen tickets" set from disk.
-
-#     Lay-person explanation:
-#     - We store ticket IDs in a JSON file so we can remember them between runs.
-#     - If the file doesn't exist or is broken, we fall back to an empty set.
-
-#     Returns:
-#         A set of ticket IDs (strings).
-#     """
-#     if not os.path.exists(STATE_FILE):  # If the file doesn't exist...
-#         return set()  # Return an empty set (meaning we haven't seen anything).
-#     try:
-#         with open(STATE_FILE, "r", encoding="utf-8") as f:  # Open the file for reading.
-#             data = json.load(f)  # Load JSON from file.
-#         return set(data) if isinstance(data, list) else set()  # Convert list -> set; otherwise empty set.
-#     except Exception:
-#         return set()  # If file is corrupted or unreadable, ignore and start fresh.
-
-# def save_seen(seen: set) -> None:
-#     """
-#     Save the "seen tickets" set to disk.
-
-#     Lay-person explanation:
-#     - Sets are not directly JSON serializable in the way we want, so we convert to a list.
-#     - We sort it so the file stays stable and readable.
-
-#     Args:
-#         seen: Set of ticket IDs to store.
-#     """
-#     with open(STATE_FILE, "w", encoding="utf-8") as f:  # Open the file for writing (overwrites existing file).
-#         json.dump(sorted(list(seen)), f, indent=2)  # Save sorted IDs in pretty JSON format.
-
-def parse_smtp_to(raw: str) -> List[str]:
-    """
-    Convert a string of email recipients into a list.
-
-    Lay-person explanation:
-    - Some people write multiple emails separated by commas or semicolons.
-    - This function splits by comma or semicolon and cleans whitespace.
-
-    Args:
-        raw: A string like "a@x.com, b@y.com; c@z.com"
-
-    Returns:
-        List of email addresses.
-    """
-    parts = re.split(r"[;,]\s*", raw.strip())  # Split by comma/semicolon with optional spaces.
-    return [p.strip() for p in parts if p.strip()]  # Remove blanks and trim spaces.
-
-def send_email(subject: str, body: str) -> None:
-    """
-    Send a plain-text email using SMTP.
-
-    Lay-person explanation:
-    - SMTP is a standard way to send email programmatically.
-    - We connect to an email server (SMTP_HOST/SMTP_PORT),
-      authenticate (username/password),
-      and then send the message.
-
-    Args:
-        subject: The email subject line.
-        body: The email body content (plain text).
-
-    Raises:
-        RuntimeError: If required env vars are missing (via env()).
-        smtplib.SMTPException: If sending fails.
-    """
-    smtp_host = env("SMTP_HOST")  # Read SMTP server hostname.
-    smtp_port = int(env("SMTP_PORT"))  # Read SMTP server port and convert to int.
-    smtp_user = env("SMTP_USERNAME")  # Read SMTP login username.
-    smtp_pass = env("SMTP_PASSWORD")  # Read SMTP login password.
-
-    to_list   = parse_smtp_to(env("SMTP_TO"))  # Read recipients and parse into a list.
-    from_addr = env("SMTP_FROM")  # Read sender email address.
-
-    msg = EmailMessage()  # Create an email object.
-    msg["Subject"] = subject  # Set email subject.
-    msg["From"] = from_addr  # Set sender.
-    msg["To"] = ", ".join(to_list)  # Set recipients as a comma-separated string.
-    msg.set_content(body)  # Set the email body as plain text.
-
-    context = ssl.create_default_context(cafile=certifi.where())
-
-    if smtp_port == 465:  # Port 465 usually means "implicit SSL" (connect already encrypted).
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=30) as s:  # Open encrypted SMTP connection.
-            s.login(smtp_user, smtp_pass)  # Log in to the SMTP server.
-            s.send_message(msg)  # Send the email message.
-    else:  # Other ports often use STARTTLS (upgrade to TLS after connecting).
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as s:  # Open normal SMTP connection.
-            s.ehlo()  # Say hello to server (negotiation step).
-            s.starttls(context=context)  # Upgrade the connection to encrypted TLS.
-            s.ehlo()  # Say hello again after TLS (best practice).
-            s.login(smtp_user, smtp_pass)  # Log in.
-            s.send_message(msg)  # Send the email message.
 
 def post_to_teams(webhook_url: str, payload: Dict[str, Any]) -> None:
     """
@@ -487,58 +382,6 @@ def post_to_teams(webhook_url: str, payload: Dict[str, Any]) -> None:
         print("Teams response body:", (r.text or "")[:2000])  # Print up to 2000 chars of response for debugging.
     r.raise_for_status()                                      # Raise an exception for non-success status codes.
 
-def format_email_body(
-    *,
-    ticket_id: str,
-    ticket_number: str,
-    subject_line: str,
-    status: str,
-    status_type: str,
-    created_display: str,
-    age_minutes: int,
-    web_url: str,
-    reason: str,
-) -> str:
-    """
-    Build a neat, readable plain-text email body.
-
-    Lay-person explanation:
-    - We create a consistent, easy-to-scan email message.
-    - We show key details (number, status, age, URL, etc.).
-    - The "reason" explains why this ticket triggered the alert.
-
-    Returns:
-        A single plain-text string to use as the email body.
-    """
-    lines = []  # Start with an empty list of text lines (we'll join them at the end).
-    lines.append("SUPER-STAT REMINDER (Automated)")  # Add title line.
-    lines.append("-" * 72)  # Add a divider line.
-    lines.append("This ticket is still NOT resolved and matched the alert rules.")  # Explain why email exists.
-    lines.append(f"Matched because: {reason}")  # Explain which rule was matched.
-    lines.append("")  # Blank line for readability.
-    lines.append("Ticket Details")  # Section header.
-    lines.append("-" * 72)  # Divider line under header.
-
-    fields = [
-        ("Ticket Number", ticket_number),
-        ("Ticket ID", ticket_id),
-        ("Subject", subject_line),
-        ("Status", status),
-        ("Status Type", status_type),
-        ("Created (LA)", created_display),
-        ("Age (minutes)", str(age_minutes)),
-        ("URL", web_url),
-    ]
-    # This list holds the "label" and "value" pairs we want to print in the email.
-
-    label_width = max(len(k) for k, _ in fields)  # Find the longest label length for alignment.
-    for k, v in fields:  # Loop over each label/value pair...
-        lines.append(f"{k:<{label_width}} : {v}")  # Add an aligned line like "Status : Pending".
-
-    lines.append("")  # Add blank line at end of details.
-    lines.append("-" * 72)  # Final divider line.
-    lines.append("If you believe you received this in error, please ignore.")  # Closing note.
-    return "\n".join(lines)  # Join all lines with newline characters into one string.
 
 def build_teams_adaptive_card(
     *,
@@ -600,6 +443,21 @@ def build_teams_adaptive_card(
             }
         ],
     }
+
+
+def contains_magic_phrase(*texts: Any) -> bool:
+    """
+    True if any text contains the magic trigger phrase (case-insensitive, ignores extra whitespace).
+    """
+    if not MAGIC_TRIGGER:
+        return False
+    for t in texts:
+        if not isinstance(t, str):
+            continue
+        normalized = re.sub(r"\s+", " ", t).lower()
+        if MAGIC_TRIGGER in normalized:
+            return True
+    return False
 
 # -----------------------------
 # Zoho Desk calls (talking to Zoho)
@@ -841,7 +699,7 @@ def main_loop() -> None:
       1) Get Zoho access token
       2) Search tickets in active statuses and recent time window
       3) For each ticket, fetch details and decide whether to alert
-      4) Send email (and Teams message if enabled)
+      4) Send Teams message if enabled (email disabled)
       5) Clean up the "seen" list so it doesn't grow forever
       6) Sleep until next run
     """
@@ -869,12 +727,8 @@ def main_loop() -> None:
     last_sent: Dict[str, datetime] = load_last_sent(last_sent_path)  # ticket_id -> datetime when we last alerted.
     print(f"Loaded {len(last_sent)} last-sent entries from {last_sent_path}")  # Log how many entries were loaded.
 
-    # NOTE (plain English):
-    # We are NOT using the seen-state file mechanism in the runtime loop right now.
-    # We are keeping all original comments and documentation, but we are removing the
-    # runtime dependency on "seen", "still_open", "cleared", and CLEAN_SEEN cleanup.
 
-    # Thread pool lets email + Teams notifications run in parallel per ticket.
+    # Thread pool lets Teams notifications run in parallel per ticket.
     with ThreadPoolExecutor(max_workers=NOTIFY_WORKERS) as executor:
         while True:  # Infinite loop: script will run until you stop it.
             try:  # Catch errors so one failure doesn't kill the loop.
@@ -938,57 +792,42 @@ def main_loop() -> None:
                         age_minutes = -1  # Use -1 to indicate unknown age.
                         created_display = created_raw or "(unknown)"  # Fall back to raw string or placeholder.
 
-                    email_subject = f"[Super-STAT REMINDER] Ticket {ticket_number} still NOT resolved"
-                    # Create a clear subject line for the email reminder.
+                    print(f"ALERT: Ticket {ticket_number} ({tid}) -> notifying Teams... reason={reason}")  # Log alert action.
 
-                    email_body = format_email_body(
-                        ticket_id=str(tid),  # Ticket ID.
+                    # Kick off Teams notification (email disabled).
+                    futures = []
+
+                    # Build payload once; send if we have any webhook target (magic or normal).
+                    title = "SUPER-STAT REMINDER (Automated)"  # Card title.
+                    summary = f"Ticket {ticket_number} is still NOT resolved."  # Short summary line.
+                    teams_payload = build_teams_adaptive_card(
+                        title=title,  # Card title.
+                        summary=summary,  # Card summary.
                         ticket_number=ticket_number,  # Ticket number.
-                        subject_line=subject_line,  # Ticket subject.
-                        status=str(details.get("status", "") or ""),  # Ticket status.
-                        status_type=str(details.get("statusType", "") or ""),  # Ticket status type.
-                        created_display=created_display,  # Created time in LA format.
-                        age_minutes=age_minutes,  # Age in minutes.
-                        web_url=web_url,  # Link to the ticket.
-                        reason=reason,  # Explanation of match.
+                        ticket_id=str(tid),  # Ticket ID.
+                        subject_line=subject_line,  # Subject line.
+                        status=str(details.get("status", "") or ""),  # Status.
+                        status_type=str(details.get("statusType", "") or ""),  # Status type.
+                        created_display=created_display,  # Created time display.
+                        age_minutes=age_minutes,  # Age.
+                        reason=reason,  # Why this matched.
+                        web_url=web_url,  # Link to ticket.
                     )
-                    # The above block builds the entire email body in a neat format.
 
-                    print(f"ALERT: Ticket {ticket_number} ({tid}) -> emailing... reason={reason}")  # Log alert action.
+                    # Choose which webhook to use: special test webhook if magic phrase is present; otherwise normal env webhook.
+                    magic_hit = contains_magic_phrase(subject_line, description_text, row.get("subject"), row.get("description"))
+                    target_webhook = MAGIC_TEST_WEBHOOK if magic_hit else TEAMS_WEBHOOK_URL
 
-                    # Kick off email (and optionally Teams) in parallel threads.
-                    futures = [executor.submit(send_email, email_subject, email_body)]
+                    if not target_webhook:
+                        print(f"Skip Teams for ticket {ticket_number} ({tid}) - no webhook configured.")
+                        continue
 
-                    if TEAMS_WEBHOOK_URL:  # Only do Teams posting if webhook URL is configured.
-                        title = "SUPER-STAT REMINDER (Automated)"  # Card title.
-                        summary = f"Ticket {ticket_number} is still NOT resolved."  # Short summary line.
-                        teams_payload = build_teams_adaptive_card(
-                            title=title,  # Card title.
-                            summary=summary,  # Card summary.
-                            ticket_number=ticket_number,  # Ticket number.
-                            ticket_id=str(tid),  # Ticket ID.
-                            subject_line=subject_line,  # Subject line.
-                            status=str(details.get("status", "") or ""),  # Status.
-                            status_type=str(details.get("statusType", "") or ""),  # Status type.
-                            created_display=created_display,  # Created time display.
-                            age_minutes=age_minutes,  # Age.
-                            reason=reason,  # Why this matched.
-                            web_url=web_url,  # Link to ticket.
-                        )
-                        # The above builds the Teams Adaptive Card JSON.
+                    print(
+                        f"ALERT: Ticket {ticket_number} ({tid}) -> posting to Teams..."
+                        f"{' (magic test webhook)' if magic_hit else ''}"
+                    )  # Log Teams action with note if using test webhook.
 
-                        # Choose which webhook to use: special test webhook if magic phrase is present; otherwise normal env webhook.
-                        combined_text = f"{subject_line} {description_text}"  # Combine subject + description.
-                        lowered_text = combined_text.lower() if isinstance(combined_text, str) else ""  # Normalize for search.
-                        use_magic_webhook = "test ticket by magic ai" in lowered_text  # True only if the exact phrase is present.
-                        target_webhook = MAGIC_TEST_WEBHOOK if use_magic_webhook else TEAMS_WEBHOOK_URL  # Pick webhook based on phrase.
-
-                        print(
-                            f"ALERT: Ticket {ticket_number} ({tid}) -> posting to Teams..."
-                            f"{' (magic test webhook)' if use_magic_webhook else ''}"
-                        )  # Log Teams action with note if using test webhook.
-
-                        futures.append(executor.submit(post_to_teams, target_webhook, teams_payload))
+                    futures.append(executor.submit(post_to_teams, target_webhook, teams_payload))
 
                     # Wait for all queued notifications to finish (raises if any failed).
                     for fut in futures:
@@ -1014,7 +853,7 @@ def main_loop() -> None:
                 if hits == 0:  # If we did not alert on any tickets this run...
                     print("No NEW matching unresolved tickets found.")  # Note: wording says "NEW" but alerts can repeat.
                 else:
-                    print(f"Sent {hits} reminder email(s) (+ Teams if enabled).")  # Log alert count.
+                    print(f"Sent {hits} reminder notification(s) to Teams.")  # Log alert count.
 
             except Exception as e:  # Catch any error from the entire loop iteration...
                 print("ERROR:", repr(e))  # Print the error so we know what went wrong.
