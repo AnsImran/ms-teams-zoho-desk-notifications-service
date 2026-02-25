@@ -40,13 +40,6 @@ load_dotenv()  # Load variables from a .env file (if present) into the environme
 # Configuration (settings)
 # -----------------------------
 
-# NOTE (plain English):
-# We are intentionally NOT using the "seen tickets" state mechanism at runtime anymore.
-# We are keeping the original comments and functions below (verbatim) because you said:
-# - Do not remove any comment at all.
-# - The documentation is very necessary.
-# The monitoring logic below will still alert on every run for matching unresolved tickets.
-
 CHECK_EVERY_SECONDS = int(os.getenv("CHECK_EVERY_SECONDS", "30"))
 # How often we check for tickets, in seconds.
 # Default is 30 seconds so we spot new tickets quickly.
