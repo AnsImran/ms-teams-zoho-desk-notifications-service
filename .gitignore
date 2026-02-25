@@ -26,5 +26,6 @@ credentials
 **/__pycache__/
 **/__pycache__/**
 
-**/sent_notifications.json/
-**/sent_notifications.json/**
+**/sent_superstat_notifications.json
+**/sent_code_stroke_notifications.json
+**/sent_notifications.json
