@@ -21,24 +21,24 @@ load_dotenv()  # Makes later env lookups succeed without manual loading.
 # -----------------------------
 
 DEFAULT_TZ_NAME = os.getenv("TZ_NAME", "America/Los_Angeles")  # Time zone string for display and windows.
-LA_TZ = pytz.timezone(DEFAULT_TZ_NAME)  # Time zone object we reuse everywhere.
+LA_TZ           = pytz.timezone(DEFAULT_TZ_NAME)  # Time zone object we reuse everywhere.
 
-CHECK_EVERY_SECONDS = int(os.getenv("CHECK_EVERY_SECONDS", "30"))  # Polling interval shared by all products.
-MAX_AGE_HOURS_DEFAULT = int(os.getenv("MAX_AGE_HOURS", "24"))  # Default search lookback window in hours.
+CHECK_EVERY_SECONDS     = int(os.getenv("CHECK_EVERY_SECONDS", "30"))  # Polling interval shared by all products.
+MAX_AGE_HOURS_DEFAULT   = int(os.getenv("MAX_AGE_HOURS", "24"))  # Default search lookback window in hours.
 MIN_AGE_MINUTES_DEFAULT = int(os.getenv("MIN_AGE_MINUTES", "5"))  # Default minimum ticket age before alerting.
-PAGE_LIMIT = int(os.getenv("PAGE_LIMIT", "50"))  # Hard cap on search pages to avoid endless loops.
-PAGE_SIZE = int(os.getenv("PAGE_SIZE", "100"))  # Page size for Zoho search calls.
+PAGE_LIMIT              = int(os.getenv("PAGE_LIMIT", "50"))  # Hard cap on search pages to avoid endless loops.
+PAGE_SIZE               = int(os.getenv("PAGE_SIZE", "100"))  # Page size for Zoho search calls.
 NOTIFY_COOLDOWN_SECONDS = int(os.getenv("NOTIFY_COOLDOWN_SECONDS", str(5 * 60)))  # Cooldown per ticket before re-alert.
-NOTIFY_WORKERS_RAW = os.getenv("NOTIFY_WORKERS", "").strip()  # Raw env value for notify worker count (may be blank).
-NOTIFY_WORKERS = int(NOTIFY_WORKERS_RAW) if NOTIFY_WORKERS_RAW else None  # Worker count for Teams posts; None lets Python choose.
-ZOHO_DESK_BASE = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")  # Base URL for Zoho Desk.
+NOTIFY_WORKERS_RAW      = os.getenv("NOTIFY_WORKERS", "").strip()  # Raw env value for notify worker count (may be blank).
+NOTIFY_WORKERS          = int(NOTIFY_WORKERS_RAW) if NOTIFY_WORKERS_RAW else None  # Worker count for Teams posts; None lets Python choose.
+ZOHO_DESK_BASE          = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")  # Base URL for Zoho Desk.
 ZOHO_ACCOUNTS_TOKEN_URL = os.getenv("ZOHO_ACCOUNTS_TOKEN_URL", "https://accounts.zoho.com/oauth/v2/token")  # Token endpoint.
 
 MAGIC_TEST_WEBHOOK = "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM"  # Shared test webhook for magic phrase.
-MAGIC_TRIGGER = os.getenv("MAGIC_TEST_TRIGGER_PHRASE", "test ticket by magic ai").strip().lower()  # Magic phrase text.
+MAGIC_TRIGGER      = os.getenv("MAGIC_TEST_TRIGGER_PHRASE", "test ticket by magic ai").strip().lower()  # Magic phrase text.
 
-TOKEN_LIFETIME_SECONDS = 3600  # Zoho access tokens last one hour.
-TOKEN_RENEW_GRACE_SECONDS = 10 * 60  # Refresh when less than ten minutes remain.
+TOKEN_LIFETIME_SECONDS      = 3600  # Zoho access tokens last one hour.
+TOKEN_RENEW_GRACE_SECONDS   = 10 * 60  # Refresh when less than ten minutes remain.
 TOKEN_CACHE: Dict[str, Any] = {"token": None, "created_at": None, "expires_at": None}  # Simple in-memory token cache.
 
 # -----------------------------
@@ -48,14 +48,14 @@ TOKEN_CACHE: Dict[str, Any] = {"token": None, "created_at": None, "expires_at": 
 @dataclass  # Decorator that turns the class below into a lightweight data container.
 class ProductConfig:  # Holds settings for one product watcher.
     """Holds the knobs for one product watcher (kept easy to read)."""  # Plain-English class docstring.
-    name: str  # Friendly product label for logs.
-    keyword_regex: str  # Regex that finds product mentions.
-    target_product_names: List[str]  # Product names to match exactly (case-insensitive).
-    active_statuses: Set[str]  # Status strings considered open.
+    name:                  str  # Friendly product label for logs.
+    keyword_regex:         str  # Regex that finds product mentions.
+    target_product_names:  List[str]  # Product names to match exactly (case-insensitive).
+    active_statuses:       Set[str]  # Status strings considered open.
     teams_webhook_env_var: str  # Env var name that stores the Teams webhook for this product.
-    last_sent_filename: str  # File name where we remember cooldown timestamps.
-    max_age_hours: int = MAX_AGE_HOURS_DEFAULT  # How far back to search; defaults to shared value.
-    min_age_minutes: int = MIN_AGE_MINUTES_DEFAULT  # Minimum age before alert; defaults to shared value.
+    last_sent_filename:    str  # File name where we remember cooldown timestamps.
+    max_age_hours:         int = MAX_AGE_HOURS_DEFAULT  # How far back to search; defaults to shared value.
+    min_age_minutes:       int = MIN_AGE_MINUTES_DEFAULT  # Minimum age before alert; defaults to shared value.
 
 # -----------------------------
 # Tiny helper utilities
