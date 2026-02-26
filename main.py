@@ -11,7 +11,7 @@ from src.superstat_cron.watch_helper import (  # Import shared helpers we need h
     delete_cooldown_file,  # Helper to clear cooldown files at startup.
     search_tickets,  # Shared Zoho ticket search to fetch once per loop.
 )  # End of helper imports list.
-from src.superstat_cron import superstat_watch, code_stroke_watch, pending_watch  # Product-specific watcher modules.
+from src.superstat_cron import superstat_watch, code_stroke_watch, critical_findings_watch, pending_watch  # Product-specific watcher modules.
 
 PRODUCT_WORKERS_RAW = os.getenv("PRODUCT_WORKERS", "").strip()  # Raw env value for product worker count (may be blank).
 PRODUCT_WORKERS = int(PRODUCT_WORKERS_RAW) if PRODUCT_WORKERS_RAW else None  # Worker count for product threads; None lets Python choose.
@@ -22,14 +22,17 @@ def run_all_products_loop() -> None:  # Keep the infinite loop that services eve
     load_dotenv()  # Make sure env vars from .env are available right away.
     delete_cooldown_file(superstat_watch.SUPERSTAT_CONFIG)  # Reset Super-Stat cooldown file once at startup.
     delete_cooldown_file(code_stroke_watch.CODE_STROKE_CONFIG)  # Reset Code Stroke cooldown file once at startup.
+    delete_cooldown_file(critical_findings_watch.CRITICAL_FINDINGS_CONFIG)  # Reset Critical Findings cooldown file once at startup.
     pending_watch.delete_pending_schedule_state_file()  # Reset pending schedule state once at startup.
     shared_statuses = sorted(  # Combine statuses watched by product-specific reminder watchers.
         superstat_watch.SUPERSTAT_CONFIG.active_statuses  # Super-Stat statuses.
         .union(code_stroke_watch.CODE_STROKE_CONFIG.active_statuses)  # Code Stroke statuses.
+        .union(critical_findings_watch.CRITICAL_FINDINGS_CONFIG.active_statuses)  # Critical Findings statuses.
     )  # End shared statuses computation.
     shared_hours = max(  # Use one lookback that satisfies all watchers.
         superstat_watch.SUPERSTAT_CONFIG.max_age_hours,  # Super-Stat lookback.
         code_stroke_watch.CODE_STROKE_CONFIG.max_age_hours,  # Code Stroke lookback.
+        critical_findings_watch.CRITICAL_FINDINGS_CONFIG.max_age_hours,  # Critical Findings lookback.
     )  # End shared lookback computation.
     pending_executor = ThreadPoolExecutor(max_workers=1)  # Dedicated background worker for pending summary runs.
     pending_future = None  # Track currently-running pending summary job, if any.
@@ -47,10 +50,11 @@ def run_all_products_loop() -> None:  # Keep the infinite loop that services eve
                     pending_future = pending_executor.submit(pending_watch.run_cycle, token)  # Run pending watcher asynchronously with its own fetch path.
                 tickets = search_tickets(token, statuses=shared_statuses, hours=shared_hours)  # Fetch tickets once for Super-Stat and Code Stroke only.
                 with ThreadPoolExecutor(max_workers=PRODUCT_WORKERS) as executor:  # Spin up a small pool for product-level parallelism.
-                    futures = []  # Collect futures for both products.
+                    futures = []  # Collect futures for all product watchers.
                     futures.append(executor.submit(superstat_watch.run_cycle, token, tickets))  # Submit Super-Stat cycle to pool.
                     futures.append(executor.submit(code_stroke_watch.run_cycle, token, tickets))  # Submit Code Stroke cycle to pool.
-                    for future in futures:  # Wait for both products to finish.
+                    futures.append(executor.submit(critical_findings_watch.run_cycle, token, tickets))  # Submit Critical Findings cycle to pool.
+                    for future in futures:  # Wait for all products to finish.
                         future.result()  # Raise any error that occurred inside the thread.
             except Exception as error:  # Catch any unexpected problem.
                 print("ERROR in main loop:", repr(error))  # Log the problem in simple words.
