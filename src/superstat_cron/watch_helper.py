@@ -6,7 +6,7 @@ import re  # Run simple keyword matching with regular expressions.
 import time  # Sleep between polling loops.
 from dataclasses import dataclass  # Define tiny config containers.
 from datetime import datetime, timedelta, timezone  # Handle time math safely.
-from typing import Any, Dict, List, Set, Tuple  # Provide friendly type hints.
+from typing import Any, Dict, List, Optional, Set, Tuple  # Provide friendly type hints.
 from concurrent.futures import ThreadPoolExecutor  # Send Teams posts in parallel.
 
 import pytz  # Keep all local time handling consistent (Los Angeles by default).
@@ -56,6 +56,18 @@ class ProductConfig:  # Holds settings for one product watcher.
     last_sent_filename:    str  # File name where we remember cooldown timestamps.
     max_age_hours:         int = MAX_AGE_HOURS_DEFAULT  # How far back to search; defaults to shared value.
     min_age_minutes:       int = MIN_AGE_MINUTES_DEFAULT  # Minimum age before alert; defaults to shared value.
+
+
+@dataclass  # Lightweight container for scheduled pending summary settings.
+class PendingSummaryConfig:  # Holds knobs used by the pending summary watcher.
+    """Holds configuration for scheduled pending-ticket summaries."""  # Plain-English class docstring.
+    name:                  str  # Friendly watcher label for logs.
+    pending_status_name:   str  # Status text treated as pending.
+    teams_webhook_env_var: str  # Env var that stores pending-summary Teams webhook.
+    report_times_la:       List[Tuple[int, int]]  # Scheduled local LA times as (hour, minute).
+    report_window_seconds: int  # Send window around each scheduled time.
+    last_sent_filename:    str  # File where we store sent slot keys.
+    max_age_hours:         int = MAX_AGE_HOURS_DEFAULT  # Lookback window for fallback search calls.
 
 # -----------------------------
 # Tiny helper utilities
@@ -231,6 +243,32 @@ def build_teams_adaptive_card(  # Build and wrap an adaptive card payload.
             {"contentType": "application/vnd.microsoft.card.adaptive", "content": card}  # Adaptive card attachment.
         ],  # End attachments list.
     }  # End envelope and return it.
+
+
+def build_pending_tickets_adaptive_card(  # Build a Teams card that lists pending tickets with clickable links.
+    *,  # Only allow keyword arguments for readability.
+    title: str,  # Card title text.
+    summary: str,  # Summary line under the title.
+    pending_lines_markdown: List[str],  # One markdown bullet per pending ticket.
+) -> Dict[str, Any]:  # Return a Teams message payload.
+    """Build a compact Adaptive Card for scheduled pending-ticket summaries."""  # Plain docstring.
+    lines_text = "\n".join(pending_lines_markdown) if pending_lines_markdown else "- (no pending tickets in this window)"  # Join list entries for one markdown block.
+    card = {  # Adaptive Card content.
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",  # Schema reference.
+        "type": "AdaptiveCard",  # Card type.
+        "version": "1.4",  # Card version supported by Teams.
+        "body": [  # Body elements rendered in order.
+            {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True},  # Card title.
+            {"type": "TextBlock", "text": summary, "wrap": True, "spacing": "Small"},  # Summary text.
+            {"type": "TextBlock", "text": lines_text, "wrap": True, "spacing": "Small"},  # Markdown list of pending tickets.
+        ],  # End card body.
+    }  # End card dictionary.
+    return {  # Wrap the adaptive card in a Teams webhook envelope.
+        "type": "message",  # Message envelope type.
+        "attachments": [  # Attachments array with one adaptive card.
+            {"contentType": "application/vnd.microsoft.card.adaptive", "content": card}  # Teams card attachment.
+        ],  # End attachments array.
+    }  # End message envelope.
 
 
 def contains_magic_phrase(*texts: Any) -> bool:  # Look for the shared magic phrase in any text.
@@ -461,6 +499,137 @@ def run_product_loop_once(config: ProductConfig, token: str, pre_fetched_tickets
         print(f"[{config.name}] No matching unresolved tickets found this cycle.")  # Log quiet cycle.
     else:  # If we sent something...
         print(f"[{config.name}] Sent {hits} reminder notification(s) to Teams.")  # Log count.
+
+# -----------------------------
+# Pending summary helpers
+# -----------------------------
+
+def parse_hhmm_schedule(raw_text: str, env_name: str = "PENDING_REPORT_TIMES_LA") -> List[Tuple[int, int]]:  # Parse semicolon-separated 24-hour HH:MM strings.
+    """Parse env text like '04:00;12:00;20:00' into unique (hour, minute) tuples."""  # Docstring in plain language.
+    entries = [entry.strip() for entry in raw_text.split(";") if entry.strip()]  # Split on semicolons and drop blanks.
+    if not entries:  # Guard against empty schedule configs.
+        raise RuntimeError(f"{env_name} is empty. Use HH:MM;HH:MM in 24-hour format.")  # Raise clear config error.
+    parsed: List[Tuple[int, int]] = []  # Output list preserving input order.
+    seen: set[Tuple[int, int]] = set()  # Track duplicates.
+    for entry in entries:  # Parse each HH:MM token.
+        parts = entry.split(":")  # Expected shape is exactly hour:minute.
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():  # Validate basic token structure.
+            raise RuntimeError(f"Invalid time '{entry}' in {env_name}. Expected HH:MM in 24-hour format.")  # Raise parse error.
+        hour = int(parts[0])  # Hour component as int.
+        minute = int(parts[1])  # Minute component as int.
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:  # Validate allowed ranges.
+            raise RuntimeError(f"Invalid time '{entry}' in {env_name}. Hour must be 00-23 and minute 00-59.")  # Raise range error.
+        value = (hour, minute)  # Canonical tuple form.
+        if value in seen:  # Ignore duplicate entries.
+            continue  # Skip duplicate.
+        seen.add(value)  # Mark tuple as seen.
+        parsed.append(value)  # Keep tuple in the parsed output.
+    return parsed  # Return parsed schedule list.
+
+
+def _scheduled_slot_if_due(now_local: datetime, report_times_la: List[Tuple[int, int]], window_seconds: int) -> Optional[Tuple[str, datetime]]:  # Detect whether now is inside any scheduled window.
+    """Return (slot_key, slot_time) when now falls within +/- window of a scheduled LA time."""  # Docstring.
+    for hour, minute in report_times_la:  # Check all configured times for today.
+        slot_time = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)  # Build today's scheduled timestamp.
+        if abs((now_local - slot_time).total_seconds()) <= window_seconds:  # Accept times just before or after slot.
+            return slot_time.strftime("%Y-%m-%d %H:%M"), slot_time  # Stable key used for slot de-dup.
+    return None  # Not currently in any configured send window.
+
+
+def pending_summary_state_path(config: PendingSummaryConfig) -> str:  # Compute absolute path for pending summary slot-state file.
+    """Return path to the pending summary slot-state file for this config."""  # Brief docstring.
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # Locate directory containing this helper module.
+    return os.path.join(script_dir, config.last_sent_filename)  # Build full path to slot-state JSON.
+
+
+def delete_pending_summary_state_file(config: PendingSummaryConfig) -> None:  # Delete pending schedule state file at startup.
+    """Remove pending summary state file so slot tracking starts fresh for this process."""  # Docstring in simple words.
+    path = pending_summary_state_path(config)  # Resolve file path from config.
+    if os.path.exists(path):  # Delete only when file already exists.
+        try:  # Attempt safe file removal.
+            os.remove(path)  # Delete slot-state file.
+            print(f"[{config.name}] Startup cleanup: removed {path}")  # Log success for visibility.
+        except Exception as error:  # Catch deletion failures without crashing the app.
+            print(f"[{config.name}] WARNING: Could not delete state file {path}: {error}")  # Log warning message.
+
+
+def pending_tickets_only(tickets: List[Dict[str, Any]], pending_status_name: str) -> List[Dict[str, Any]]:  # Filter tickets to exact pending status matches.
+    """Return only tickets whose status equals the configured pending status (case-insensitive)."""  # Docstring.
+    target_status = pending_status_name.strip().lower()  # Normalize target status once.
+    output: List[Dict[str, Any]] = []  # Collect pending tickets here.
+    for ticket in tickets:  # Check each ticket from search results.
+        status = (ticket.get("status") or "").strip().lower()  # Normalize ticket status.
+        if status == target_status:  # Keep exact status matches only.
+            output.append(ticket)  # Add matching ticket.
+    return output  # Return filtered pending list.
+
+
+def one_line_text(value: Any, fallback: str = "(no subject)") -> str:  # Convert input text into a single compact line.
+    """Collapse whitespace into one line and provide fallback for missing values."""  # Brief docstring.
+    if not isinstance(value, str):  # Non-string values cannot be normalized directly.
+        return fallback  # Return fallback text.
+    normalized = re.sub(r"\s+", " ", value).strip()  # Collapse multiple whitespace and trim edges.
+    return normalized or fallback  # Return fallback when normalized text is empty.
+
+
+def build_pending_ticket_lines_markdown(tickets: List[Dict[str, Any]]) -> List[str]:  # Build markdown bullets with clickable links for pending tickets.
+    """Build markdown bullet lines containing ticket id, optional number, subject, and link."""  # Docstring.
+    lines: List[str] = []  # Collect one markdown line per ticket.
+    for ticket in tickets:  # Transform each ticket into a compact bullet line.
+        ticket_id = str(ticket.get("id") or "").strip()  # Read full ticket id.
+        if not ticket_id:  # Skip malformed entries without IDs.
+            continue  # Skip this row.
+        ticket_number = str(ticket.get("ticketNumber") or "").strip()  # Read ticket number when present.
+        subject = one_line_text(ticket.get("subject"))  # Keep subject on one line.
+        web_url = str(ticket.get("webUrl") or "").strip()  # Read ticket URL when present.
+        if web_url:  # Prefer clickable line when URL exists.
+            label = f"ID {ticket_id} (#{ticket_number})" if ticket_number else f"ID {ticket_id}"  # Link label text.
+            lines.append(f"- [{label}]({web_url}) - {subject}")  # Clickable markdown bullet.
+        elif ticket_number:  # No URL but ticket number exists.
+            lines.append(f"- ID {ticket_id} (#{ticket_number}) - {subject}")  # Plain markdown bullet with number.
+        else:  # No URL and no ticket number available.
+            lines.append(f"- ID {ticket_id} - {subject}")  # Plain markdown bullet with id only.
+    return lines  # Return all prepared markdown lines.
+
+
+def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str, pre_fetched_tickets: List[Dict[str, Any]] = None) -> None:  # Run one pending summary cycle using shared tickets when available.
+    """Run one pending summary cycle and send one card per due schedule slot."""  # Docstring.
+    now_local = now_la()  # Capture LA time once for this cycle.
+    slot_match = _scheduled_slot_if_due(now_local, config.report_times_la, config.report_window_seconds)  # Determine if now is inside any slot window.
+    if not slot_match:  # Most polling loops are outside configured schedule windows.
+        return  # Exit quietly.
+
+    slot_key, slot_time = slot_match  # Slot key used for de-dup and display timestamp.
+    state_path = pending_summary_state_path(config)  # Path to slot-state JSON file.
+    sent_slots = load_last_sent(state_path)  # Read previously processed slot keys.
+    if slot_key in sent_slots:  # Skip repeated sends within the same scheduled slot.
+        return  # Slot already processed.
+
+    webhook_url = os.getenv(config.teams_webhook_env_var, "").strip()  # Read pending summary webhook from env.
+    if not webhook_url:  # Without webhook we cannot send the card.
+        print(f"[{config.name}] Skip slot {slot_key} - missing {config.teams_webhook_env_var}.")  # Log clear config issue.
+        return  # Exit without crashing main loop.
+
+    tickets = pre_fetched_tickets if pre_fetched_tickets is not None else search_tickets(token, statuses=[config.pending_status_name], hours=config.max_age_hours)  # Reuse shared fetch or fallback to direct fetch.
+    pending_tickets = pending_tickets_only(tickets, config.pending_status_name)  # Keep only pending tickets.
+    pending_lines = build_pending_ticket_lines_markdown(pending_tickets)  # Build markdown list for card body.
+
+    if not pending_lines:  # No pending tickets to report in this snapshot.
+        print(f"[{config.name}] Slot {slot_key}: no pending tickets in the shared result set.")  # Helpful no-op log.
+        sent_slots[slot_key] = now_local  # Mark slot as processed to avoid duplicate checks this window.
+        save_last_sent(state_path, sent_slots)  # Persist processed slot.
+        return  # Nothing to send.
+
+    slot_display = slot_time.strftime("%Y-%m-%d %H:%M:%S %Z")  # Friendly display of the scheduled LA slot.
+    payload = build_pending_tickets_adaptive_card(  # Build adaptive card with pending ticket list.
+        title="Pending Tickets Snapshot (Automated)",  # Card title line.
+        summary=f"LA slot {slot_display}. Found {len(pending_lines)} pending ticket(s) still open.",  # Summary text.
+        pending_lines_markdown=pending_lines,  # Markdown bullets with clickable links.
+    )  # Finish payload definition.
+    post_to_teams(webhook_url, payload)  # Send pending summary card to Teams webhook.
+    sent_slots[slot_key] = now_local  # Mark this slot as sent.
+    save_last_sent(state_path, sent_slots)  # Persist slot-state updates.
+    print(f"[{config.name}] Sent {len(pending_lines)} pending ticket(s) for slot {slot_key}.")  # Success log.
 
 # -----------------------------
 # One-time startup cleanup helper
