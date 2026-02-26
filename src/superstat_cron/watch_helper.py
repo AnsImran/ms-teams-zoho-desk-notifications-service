@@ -56,6 +56,7 @@ class ProductConfig:  # Holds settings for one product watcher.
     last_sent_filename:    str  # File name where we remember cooldown timestamps.
     max_age_hours:         int = MAX_AGE_HOURS_DEFAULT  # How far back to search; defaults to shared value.
     min_age_minutes:       int = MIN_AGE_MINUTES_DEFAULT  # Minimum age before alert; defaults to shared value.
+    card_banner_text:      str = ""  # Optional top-of-card banner text (used for product-specific instructions).
 
 
 @dataclass  # Lightweight container for scheduled pending summary settings.
@@ -202,6 +203,7 @@ def build_teams_adaptive_card(  # Build and wrap an adaptive card payload.
     *,  # Only allow keyword arguments for clarity.
     title: str,  # Card title text.
     summary: str,  # Short summary text.
+    banner_text: str = "",  # Optional top banner shown above the title.
     ticket_number: str,  # Ticket number text.
     ticket_id: str,  # Ticket id text.
     subject_line: str,  # Subject text.
@@ -213,11 +215,20 @@ def build_teams_adaptive_card(  # Build and wrap an adaptive card payload.
     web_url: str,  # Link to open the ticket.
 ) -> Dict[str, Any]:  # Return a dictionary payload ready for Teams.
     """Build the Adaptive Card body wrapped in the Teams message envelope."""  # Short docstring.
-    card = {  # Actual adaptive card payload.
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",  # Schema reference.
-        "type": "AdaptiveCard",  # Card type identifier.
-        "version": "1.4",  # Card version that Teams understands.
-        "body": [  # Visible body elements list.
+    body_blocks: List[Dict[str, Any]] = []  # Build card rows in order so optional banner can appear first.
+    if banner_text.strip():  # Add a visual instruction banner when provided.
+        body_blocks.append(  # Banner appears at very top of the card.
+            {
+                "type": "TextBlock",
+                "text": banner_text.strip(),
+                "wrap": True,
+                "weight": "Bolder",
+                "color": "Attention",
+                "size": "Medium",
+            }
+        )  # End banner block append.
+    body_blocks.extend(  # Append normal product reminder rows.
+        [
             {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True},  # Title block.
             {"type": "TextBlock", "text": summary, "wrap": True, "spacing": "Small"},  # Summary line.
             {"type": "TextBlock", "text": f"Matched because: {reason}", "wrap": True, "spacing": "Small"},  # Reason line.
@@ -233,7 +244,13 @@ def build_teams_adaptive_card(  # Build and wrap an adaptive card payload.
                     {"title": "Age (minutes)", "value": str(age_minutes)},  # Age fact.
                 ],  # End of facts list.
             },  # End fact set block.
-        ],  # End body list.
+        ]
+    )  # End normal rows append.
+    card = {  # Actual adaptive card payload.
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",  # Schema reference.
+        "type": "AdaptiveCard",  # Card type identifier.
+        "version": "1.4",  # Card version that Teams understands.
+        "body": body_blocks,  # Visible body elements list.
         "actions": [{"type": "Action.OpenUrl", "title": "Open Ticket", "url": web_url}],  # Single button action.
     }  # Close adaptive card definition.
     return {  # Wrap adaptive card inside Teams message envelope.
@@ -474,6 +491,7 @@ def run_single_product_cycle(  # Run all steps for one product in a single cycle
             teams_payload = build_teams_adaptive_card(  # Build Teams payload once.
                 title=f"{config.name.upper()} REMINDER (Automated)",  # Title with product name.
                 summary=f"Ticket {ticket_number} is still NOT resolved.",  # Short summary.
+                banner_text=config.card_banner_text,  # Optional top banner (used by selected products only).
                 ticket_number=ticket_number,  # Ticket number.
                 ticket_id=str(ticket_id),  # Ticket id.
                 subject_line=subject_line,  # Subject line.
