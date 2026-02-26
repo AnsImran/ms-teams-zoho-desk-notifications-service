@@ -3,7 +3,6 @@
 import os  # Read pending watcher environment overrides.
 
 from .watch_helper import (  # Reuse shared helper logic to keep this module thin.
-    MAX_AGE_HOURS_DEFAULT,  # Shared default lookback hours.
     PendingSummaryConfig,  # Data holder for pending summary settings.
     delete_pending_summary_state_file,  # Shared startup cleanup helper for pending slot state.
     get_access_token,  # Token helper used for standalone runs.
@@ -12,9 +11,8 @@ from .watch_helper import (  # Reuse shared helper logic to keep this module thi
 )  # End helper imports.
 
 PENDING_WEBHOOK_ENV_VAR = "TEAMS_WEBHOOK_PENDING"  # Env var that stores pending-summary Teams webhook.
-PENDING_STATUS_NAME = os.getenv("PENDING_STATUS_NAME", "Pending").strip()  # Status text treated as pending.
+PENDING_STATUS_NAME = os.getenv("PENDING_STATUS_NAME", "PENDING").strip()  # Status text treated as pending.
 PENDING_REPORT_WINDOW_SECONDS = int(os.getenv("PENDING_REPORT_WINDOW_SECONDS", "120"))  # Allowed window before/after each scheduled time (default: 2 minutes).
-PENDING_MAX_AGE_HOURS = int(os.getenv("PENDING_MAX_AGE_HOURS", str(MAX_AGE_HOURS_DEFAULT)))  # Lookback window for pending summary cycle.
 PENDING_LAST_SENT_FILENAME = "sent_pending_summary_slots.json"  # Slot-state file used for one-send-per-slot dedupe.
 PENDING_REPORT_TIMES_LA_RAW = os.getenv("PENDING_REPORT_TIMES_LA", "04:00;12:00;20:00").strip()  # LA schedule in HH:MM;HH:MM 24-hour format.
 PENDING_REPORT_TIMES_LA = parse_hhmm_schedule(PENDING_REPORT_TIMES_LA_RAW, env_name="PENDING_REPORT_TIMES_LA")  # Parsed and validated schedule tuples.
@@ -26,13 +24,12 @@ PENDING_CONFIG = PendingSummaryConfig(  # Bundle pending summary settings for sh
     report_times_la=PENDING_REPORT_TIMES_LA,  # Parsed LA schedule times.
     report_window_seconds=PENDING_REPORT_WINDOW_SECONDS,  # Window around each schedule slot.
     last_sent_filename=PENDING_LAST_SENT_FILENAME,  # Slot-state filename.
-    max_age_hours=PENDING_MAX_AGE_HOURS,  # Lookback window for fallback fetches.
 )  # End pending config definition.
 
 
-def run_cycle(token: str, pre_fetched_tickets=None) -> None:  # Run one pending summary cycle with shared tickets when available.
+def run_cycle(token: str) -> None:  # Run one pending summary cycle with a dedicated fetch path.
     """Run one scheduled pending summary cycle using shared helper logic."""  # Brief docstring.
-    run_pending_summary_loop_once(PENDING_CONFIG, token, pre_fetched_tickets=pre_fetched_tickets)  # Delegate to shared helper.
+    run_pending_summary_loop_once(PENDING_CONFIG, token)  # Delegate to shared helper.
 
 
 def delete_pending_schedule_state_file() -> None:  # Clear pending slot-state file once at startup.

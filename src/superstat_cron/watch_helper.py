@@ -67,7 +67,6 @@ class PendingSummaryConfig:  # Holds knobs used by the pending summary watcher.
     report_times_la:       List[Tuple[int, int]]  # Scheduled local LA times as (hour, minute).
     report_window_seconds: int  # Send window around each scheduled time.
     last_sent_filename:    str  # File where we store sent slot keys.
-    max_age_hours:         int = MAX_AGE_HOURS_DEFAULT  # Lookback window for fallback search calls.
 
 # -----------------------------
 # Tiny helper utilities
@@ -249,19 +248,38 @@ def build_pending_tickets_adaptive_card(  # Build a Teams card that lists pendin
     *,  # Only allow keyword arguments for readability.
     title: str,  # Card title text.
     summary: str,  # Summary line under the title.
-    pending_lines_markdown: List[str],  # One markdown bullet per pending ticket.
+    pending_ticket_entries: List[Dict[str, str]],  # One structured entry per pending ticket.
 ) -> Dict[str, Any]:  # Return a Teams message payload.
     """Build a compact Adaptive Card for scheduled pending-ticket summaries."""  # Plain docstring.
-    lines_text = "\n".join(pending_lines_markdown) if pending_lines_markdown else "- (no pending tickets in this window)"  # Join list entries for one markdown block.
+    body_blocks: List[Dict[str, Any]] = [  # Start with static title + summary rows.
+        {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True},  # Card title.
+        {"type": "TextBlock", "text": summary, "wrap": True, "spacing": "Small"},  # Summary text.
+    ]  # End initial body rows.
+    if not pending_ticket_entries:  # Render a fallback row when there are no tickets.
+        body_blocks.append({"type": "TextBlock", "text": "(no pending tickets in this window)", "wrap": True, "spacing": "Small"})  # Simple fallback line.
+    else:  # Render each ticket with a FactSet so labels are aligned like product reminder cards.
+        for ticket_index, entry in enumerate(pending_ticket_entries):  # Walk through each pending ticket entry.
+            if ticket_index > 0:  # Add one spacer row between tickets.
+                body_blocks.append({"type": "TextBlock", "text": "\u00A0", "wrap": True, "spacing": "None"})  # Extra blank line between tickets.
+            body_blocks.append(  # Add one aligned fact table per ticket.
+                {
+                    "type": "FactSet",  # Aligned label-value rows.
+                    "facts": [
+                        {"title": "Ticket Number", "value": entry.get("ticket_number", "(none)")},
+                        {"title": "Ticket ID", "value": entry.get("ticket_id_value", "(none)")},
+                        {"title": "Subject", "value": entry.get("subject", "(no subject)")},
+                        {"title": "Assignee", "value": entry.get("assignee", "(unassigned)")},
+                        {"title": "Created (LA)", "value": entry.get("created_display", "(unknown)")},
+                        {"title": "Age (minutes)", "value": entry.get("age_minutes", "-1")},
+                    ],
+                    "spacing": "Small",
+                }
+            )  # End FactSet append.
     card = {  # Adaptive Card content.
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",  # Schema reference.
         "type": "AdaptiveCard",  # Card type.
         "version": "1.4",  # Card version supported by Teams.
-        "body": [  # Body elements rendered in order.
-            {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True},  # Card title.
-            {"type": "TextBlock", "text": summary, "wrap": True, "spacing": "Small"},  # Summary text.
-            {"type": "TextBlock", "text": lines_text, "wrap": True, "spacing": "Small"},  # Markdown list of pending tickets.
-        ],  # End card body.
+        "body": body_blocks,  # Body elements rendered in strict explicit-line order.
     }  # End card dictionary.
     return {  # Wrap the adaptive card in a Teams webhook envelope.
         "type": "message",  # Message envelope type.
@@ -362,20 +380,24 @@ def should_alert(ticket: Dict[str, Any], compiled_regex: re.Pattern, target_prod
 # Zoho search
 # -----------------------------
 
-def search_tickets(token: str, statuses: List[str], hours: int) -> List[Dict[str, Any]]:  # Pull tickets from Zoho with filters.
-    """Search Zoho Desk for tickets in statuses within the lookback window."""  # Docstring.
+def search_tickets(token: str, statuses: List[str], hours: Optional[int], page_limit: Optional[int] = PAGE_LIMIT) -> List[Dict[str, Any]]:  # Pull tickets from Zoho with optional filters.
+    """Search Zoho Desk for tickets in statuses, optionally constrained by a lookback window."""  # Docstring.
     url = f"{ZOHO_DESK_BASE}/api/v1/tickets/search"  # Build search URL.
     statuses_param = ",".join(statuses)  # Join statuses for Zoho parameter.
     results: List[Dict[str, Any]] = []  # Aggregate list for pages.
     use_sort = True  # Start with sort enabled.
-    for page_idx in range(PAGE_LIMIT):  # Loop over pages up to cap.
+    page_idx = 0  # Track current page index for pagination.
+    while True:  # Continue until Zoho returns no more rows or we hit optional page cap.
+        if page_limit is not None and page_idx >= page_limit:  # Stop when configured cap is reached.
+            break  # Exit pagination loop.
         start = page_idx * PAGE_SIZE  # Calculate offset.
         params = {  # Build query parameters.
             "status": statuses_param,  # Status filter.
-            "createdTimeRange": created_time_range_la(hours),  # Time window filter.
             "from": start,  # Pagination start.
             "limit": PAGE_SIZE,  # Page size.
         }  # Finished building params dictionary.
+        if hours is not None:  # Add lookback filter only when caller requests one.
+            params["createdTimeRange"] = created_time_range_la(hours)  # Time window filter.
         if use_sort:  # Only include sort when allowed.
             params["sortBy"] = "-createdTime"  # Ask for newest first.
         response = requests.get(url, headers=desk_headers(token), params=params, timeout=30)  # Fire request.
@@ -392,6 +414,7 @@ def search_tickets(token: str, statuses: List[str], hours: int) -> List[Dict[str
         results.extend(data)  # Add page items to results.
         if len(data) < PAGE_SIZE:  # If fewer than a full page...
             break  # End pagination.
+        page_idx += 1  # Move to the next page.
     results.sort(key=lambda item: item.get("createdTime") or "", reverse=True)  # Sort newest first just in case.
     return results  # Hand back all collected tickets.
 
@@ -553,17 +576,6 @@ def delete_pending_summary_state_file(config: PendingSummaryConfig) -> None:  # 
             print(f"[{config.name}] WARNING: Could not delete state file {path}: {error}")  # Log warning message.
 
 
-def pending_tickets_only(tickets: List[Dict[str, Any]], pending_status_name: str) -> List[Dict[str, Any]]:  # Filter tickets to exact pending status matches.
-    """Return only tickets whose status equals the configured pending status (case-insensitive)."""  # Docstring.
-    target_status = pending_status_name.strip().lower()  # Normalize target status once.
-    output: List[Dict[str, Any]] = []  # Collect pending tickets here.
-    for ticket in tickets:  # Check each ticket from search results.
-        status = (ticket.get("status") or "").strip().lower()  # Normalize ticket status.
-        if status == target_status:  # Keep exact status matches only.
-            output.append(ticket)  # Add matching ticket.
-    return output  # Return filtered pending list.
-
-
 def one_line_text(value: Any, fallback: str = "(no subject)") -> str:  # Convert input text into a single compact line.
     """Collapse whitespace into one line and provide fallback for missing values."""  # Brief docstring.
     if not isinstance(value, str):  # Non-string values cannot be normalized directly.
@@ -572,27 +584,61 @@ def one_line_text(value: Any, fallback: str = "(no subject)") -> str:  # Convert
     return normalized or fallback  # Return fallback when normalized text is empty.
 
 
-def build_pending_ticket_lines_markdown(tickets: List[Dict[str, Any]]) -> List[str]:  # Build markdown bullets with clickable links for pending tickets.
-    """Build markdown bullet lines containing ticket id, optional number, subject, and link."""  # Docstring.
-    lines: List[str] = []  # Collect one markdown line per ticket.
-    for ticket in tickets:  # Transform each ticket into a compact bullet line.
+def pending_ticket_assignee_name(ticket: Dict[str, Any]) -> str:  # Extract assignee name from ticket payload.
+    """Return assignee full name from ticket data, or a clear fallback."""  # Brief docstring.
+    assignee = ticket.get("assignee")  # Read assignee object.
+    if isinstance(assignee, dict):  # Handle the expected object shape.
+        first = one_line_text(assignee.get("firstName"), fallback="").strip()  # Assignee first name.
+        last = one_line_text(assignee.get("lastName"), fallback="").strip()  # Assignee last name.
+        full_name = " ".join(part for part in (first, last) if part)  # Join non-empty name parts.
+        if full_name:  # Prefer full name when available.
+            return full_name  # Return readable full name.
+        fallback_name = one_line_text(assignee.get("name"), fallback="").strip()  # Some payloads include a single name field.
+        if fallback_name:  # Use fallback name if present.
+            return fallback_name  # Return fallback name.
+    return "(unassigned)"  # Final fallback when no assignee name is available.
+
+
+def pending_ticket_created_and_age(ticket: Dict[str, Any]) -> Tuple[str, int]:  # Compute created-time display and age in minutes, matching product-card behavior.
+    """Return (created_display, age_minutes) for pending ticket cards."""  # Brief docstring.
+    created_raw = str(ticket.get("createdTime") or "").strip()  # Raw created timestamp text.
+    try:  # Try to parse and compute values exactly like product watchers.
+        created_la = parse_zoho_time_assume_la(created_raw)  # Parse into LA time.
+        age_minutes = int((now_la() - created_la).total_seconds() // 60)  # Compute age in minutes.
+        created_display = created_la.strftime("%Y-%m-%d %H:%M:%S %Z")  # Friendly created-time display.
+        return created_display, age_minutes  # Return parsed values.
+    except Exception:  # If parse fails, keep safe fallbacks.
+        fallback_display = created_raw or "(unknown)"  # Reuse raw value when available.
+        return fallback_display, -1  # Unknown age marker.
+
+
+def build_pending_ticket_entries(tickets: List[Dict[str, Any]]) -> List[Dict[str, str]]:  # Build structured entries for pending summary cards.
+    """Build one structured entry per ticket for aligned FactSet card rendering."""  # Docstring.
+    entries: List[Dict[str, str]] = []  # Collect one structured entry per ticket.
+    for ticket in tickets:  # Transform each ticket into a structured dictionary.
         ticket_id = str(ticket.get("id") or "").strip()  # Read full ticket id.
         if not ticket_id:  # Skip malformed entries without IDs.
             continue  # Skip this row.
         ticket_number = str(ticket.get("ticketNumber") or "").strip()  # Read ticket number when present.
-        subject = one_line_text(ticket.get("subject"))  # Keep subject on one line.
         web_url = str(ticket.get("webUrl") or "").strip()  # Read ticket URL when present.
-        if web_url:  # Prefer clickable line when URL exists.
-            label = f"ID {ticket_id} (#{ticket_number})" if ticket_number else f"ID {ticket_id}"  # Link label text.
-            lines.append(f"- [{label}]({web_url}) - {subject}")  # Clickable markdown bullet.
-        elif ticket_number:  # No URL but ticket number exists.
-            lines.append(f"- ID {ticket_id} (#{ticket_number}) - {subject}")  # Plain markdown bullet with number.
-        else:  # No URL and no ticket number available.
-            lines.append(f"- ID {ticket_id} - {subject}")  # Plain markdown bullet with id only.
-    return lines  # Return all prepared markdown lines.
+        assignee_name = pending_ticket_assignee_name(ticket)  # Extract assignee first/last name.
+        subject_text = one_line_text(ticket.get("subject"), fallback="(no subject)")  # Build compact one-line subject text.
+        created_display, age_minutes = pending_ticket_created_and_age(ticket)  # Compute created display and age fields.
+        ticket_id_value = f"[{ticket_id}]({web_url})" if web_url else ticket_id  # Keep ticket id clickable when URL exists.
+        entries.append(  # Store one ticket as aligned label-value data.
+            {
+                "ticket_number": ticket_number or "(none)",
+                "ticket_id_value": ticket_id_value,
+                "subject": subject_text,
+                "assignee": assignee_name,
+                "created_display": created_display,
+                "age_minutes": str(age_minutes),
+            }
+        )  # End of one ticket entry.
+    return entries  # Return all prepared ticket entries.
 
 
-def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str, pre_fetched_tickets: List[Dict[str, Any]] = None) -> None:  # Run one pending summary cycle using shared tickets when available.
+def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str) -> None:  # Run one pending summary cycle with its own ticket fetch.
     """Run one pending summary cycle and send one card per due schedule slot."""  # Docstring.
     now_local = now_la()  # Capture LA time once for this cycle.
     slot_match = _scheduled_slot_if_due(now_local, config.report_times_la, config.report_window_seconds)  # Determine if now is inside any slot window.
@@ -610,11 +656,11 @@ def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str, pre_
         print(f"[{config.name}] Skip slot {slot_key} - missing {config.teams_webhook_env_var}.")  # Log clear config issue.
         return  # Exit without crashing main loop.
 
-    tickets = pre_fetched_tickets if pre_fetched_tickets is not None else search_tickets(token, statuses=[config.pending_status_name], hours=config.max_age_hours)  # Reuse shared fetch or fallback to direct fetch.
-    pending_tickets = pending_tickets_only(tickets, config.pending_status_name)  # Keep only pending tickets.
-    pending_lines = build_pending_ticket_lines_markdown(pending_tickets)  # Build markdown list for card body.
+    query_status = (config.pending_status_name or "PENDING").strip().upper()  # Use API-level status filtering to fetch only pending tickets.
+    tickets = search_tickets(token, statuses=[query_status], hours=None, page_limit=None)  # Fetch only pending tickets from Zoho across all available history.
+    pending_entries = build_pending_ticket_entries(tickets)  # Build aligned ticket entries for card body.
 
-    if not pending_lines:  # No pending tickets to report in this snapshot.
+    if not pending_entries:  # No pending tickets to report in this snapshot.
         print(f"[{config.name}] Slot {slot_key}: no pending tickets in the shared result set.")  # Helpful no-op log.
         sent_slots[slot_key] = now_local  # Mark slot as processed to avoid duplicate checks this window.
         save_last_sent(state_path, sent_slots)  # Persist processed slot.
@@ -623,13 +669,13 @@ def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str, pre_
     slot_display = slot_time.strftime("%Y-%m-%d %H:%M:%S %Z")  # Friendly display of the scheduled LA slot.
     payload = build_pending_tickets_adaptive_card(  # Build adaptive card with pending ticket list.
         title="Pending Tickets Snapshot (Automated)",  # Card title line.
-        summary=f"LA slot {slot_display}. Found {len(pending_lines)} pending ticket(s) still open.",  # Summary text.
-        pending_lines_markdown=pending_lines,  # Markdown bullets with clickable links.
+        summary=f"LA slot {slot_display}. Found {len(pending_entries)} pending ticket(s) still open.",  # Summary text.
+        pending_ticket_entries=pending_entries,  # Structured entries for aligned FactSet rendering.
     )  # Finish payload definition.
     post_to_teams(webhook_url, payload)  # Send pending summary card to Teams webhook.
     sent_slots[slot_key] = now_local  # Mark this slot as sent.
     save_last_sent(state_path, sent_slots)  # Persist slot-state updates.
-    print(f"[{config.name}] Sent {len(pending_lines)} pending ticket(s) for slot {slot_key}.")  # Success log.
+    print(f"[{config.name}] Sent {len(pending_entries)} pending ticket(s) for slot {slot_key}.")  # Success log.
 
 # -----------------------------
 # One-time startup cleanup helper

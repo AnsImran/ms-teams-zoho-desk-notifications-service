@@ -23,36 +23,43 @@ def run_all_products_loop() -> None:  # Keep the infinite loop that services eve
     delete_cooldown_file(superstat_watch.SUPERSTAT_CONFIG)  # Reset Super-Stat cooldown file once at startup.
     delete_cooldown_file(code_stroke_watch.CODE_STROKE_CONFIG)  # Reset Code Stroke cooldown file once at startup.
     pending_watch.delete_pending_schedule_state_file()  # Reset pending schedule state once at startup.
-    shared_statuses = sorted(  # Combine statuses watched by any product plus pending snapshots.
+    shared_statuses = sorted(  # Combine statuses watched by product-specific reminder watchers.
         superstat_watch.SUPERSTAT_CONFIG.active_statuses  # Super-Stat statuses.
         .union(code_stroke_watch.CODE_STROKE_CONFIG.active_statuses)  # Code Stroke statuses.
-        .union({pending_watch.PENDING_STATUS_NAME})  # Ensure pending status is always included.
     )  # End shared statuses computation.
     shared_hours = max(  # Use one lookback that satisfies all watchers.
         superstat_watch.SUPERSTAT_CONFIG.max_age_hours,  # Super-Stat lookback.
         code_stroke_watch.CODE_STROKE_CONFIG.max_age_hours,  # Code Stroke lookback.
-        pending_watch.PENDING_MAX_AGE_HOURS,  # Pending summary lookback.
     )  # End shared lookback computation.
-    while True:  # Repeat forever until manually stopped.
-        try:  # Protect the loop so one failure does not kill the process.
-            token = get_access_token()  # Fetch or reuse the Zoho access token (good for about an hour).
-            tickets = search_tickets(token, statuses=shared_statuses, hours=shared_hours)  # Fetch tickets once for all products.
-            try:  # Run pending summary first, without blocking product watchers on its failures.
-                pending_watch.run_cycle(token, tickets)  # Send pending summary only around scheduled LA times.
-            except Exception as pending_error:  # Keep product watchers running even if pending summary fails.
-                print("[main] ERROR in pending summary:", repr(pending_error))  # Clear pending-specific error log.
-            with ThreadPoolExecutor(max_workers=PRODUCT_WORKERS) as executor:  # Spin up a small pool for product-level parallelism.
-                futures = []  # Collect futures for both products.
-                futures.append(executor.submit(superstat_watch.run_cycle, token, tickets))  # Submit Super-Stat cycle to pool.
-                futures.append(executor.submit(code_stroke_watch.run_cycle, token, tickets))  # Submit Code Stroke cycle to pool.
-                for future in futures:  # Wait for both products to finish.
-                    future.result()  # Raise any error that occurred inside the thread.
-        except Exception as error:  # Catch any unexpected problem.
-            print("ERROR in main loop:", repr(error))  # Log the problem in simple words.
-        print(f"[main] Sleeping for {CHECK_EVERY_SECONDS} seconds...")  # Tell the operator we are pausing.
-        time.sleep(CHECK_EVERY_SECONDS)  # Pause before the next combined cycle.
-        print("")  # Blank line to separate one cycle from the next.
-        print("")  # Second blank line for clearer spacing.
+    pending_executor = ThreadPoolExecutor(max_workers=1)  # Dedicated background worker for pending summary runs.
+    pending_future = None  # Track currently-running pending summary job, if any.
+    try:  # Ensure we always close the pending executor on shutdown.
+        while True:  # Repeat forever until manually stopped.
+            try:  # Protect the loop so one failure does not kill the process.
+                token = get_access_token()  # Fetch or reuse the Zoho access token (good for about an hour).
+                if pending_future is not None and pending_future.done():  # Collect completed pending job results before launching next one.
+                    try:  # Surface pending worker exceptions without killing main loop.
+                        pending_future.result()  # Raise any exception thrown inside pending worker.
+                    except Exception as pending_error:  # Log pending worker failures clearly.
+                        print("[main] ERROR in pending summary worker:", repr(pending_error))  # Pending-specific error.
+                    pending_future = None  # Clear completed job handle.
+                if pending_future is None:  # Submit only when no pending worker job is currently running.
+                    pending_future = pending_executor.submit(pending_watch.run_cycle, token)  # Run pending watcher asynchronously with its own fetch path.
+                tickets = search_tickets(token, statuses=shared_statuses, hours=shared_hours)  # Fetch tickets once for Super-Stat and Code Stroke only.
+                with ThreadPoolExecutor(max_workers=PRODUCT_WORKERS) as executor:  # Spin up a small pool for product-level parallelism.
+                    futures = []  # Collect futures for both products.
+                    futures.append(executor.submit(superstat_watch.run_cycle, token, tickets))  # Submit Super-Stat cycle to pool.
+                    futures.append(executor.submit(code_stroke_watch.run_cycle, token, tickets))  # Submit Code Stroke cycle to pool.
+                    for future in futures:  # Wait for both products to finish.
+                        future.result()  # Raise any error that occurred inside the thread.
+            except Exception as error:  # Catch any unexpected problem.
+                print("ERROR in main loop:", repr(error))  # Log the problem in simple words.
+            print(f"[main] Sleeping for {CHECK_EVERY_SECONDS} seconds...")  # Tell the operator we are pausing.
+            time.sleep(CHECK_EVERY_SECONDS)  # Pause before the next combined cycle.
+            print("")  # Blank line to separate one cycle from the next.
+            print("")  # Second blank line for clearer spacing.
+    finally:  # Clean up the background pending executor when process exits.
+        pending_executor.shutdown(wait=False, cancel_futures=True)  # Stop accepting new pending jobs and cancel queued work.
 
 
 if __name__ == "__main__":  # Allow running via `python main.py`.
