@@ -5,14 +5,14 @@ import time                                        # Provide sleep between polli
 from concurrent.futures import ThreadPoolExecutor  # Run product watchers in parallel threads.
 from dotenv import load_dotenv                     # Load environment values from a .env file if present.
 
-from src.superstat_cron.watch_helper import (  # Import shared helpers we need here.
+from src.core.watch_helper import (  # Import shared helpers we need here.
     CHECK_EVERY_SECONDS,                       # Shared polling interval.
     get_access_token,                          # Shared Zoho token fetcher.
     delete_cooldown_file,                      # Helper to clear cooldown files at startup.
     search_tickets,                            # Shared Zoho ticket search to fetch once per loop.
 )                                              # End of helper imports list.
 
-from src.superstat_cron import (               # Product-specific watcher modules.
+from src.scripts import (                      # Product-specific watcher modules.
     superstat_watch,
     code_stroke_watch,
     critical_findings_watch,

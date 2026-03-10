@@ -2,7 +2,7 @@
 
 import os  # Read pending watcher environment overrides.
 
-from .watch_helper import (             # Reuse shared helper logic to keep this module thin.
+from src.core.watch_helper import (             # Reuse shared helper logic to keep this module thin.
     PendingSummaryConfig,               # Data holder for pending summary settings.
     delete_pending_summary_state_file,  # Shared startup cleanup helper for pending slot state.
     get_access_token,                   # Token helper used for standalone runs.

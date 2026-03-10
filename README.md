@@ -13,7 +13,7 @@ Install deps:
 
 Run examples:
 - `uv run python main.py`
-- `uv run python "src/superstat_cron/superstat_watch.py"`
+- `uv run python "src/scripts/superstat_watch.py"`
 - `uv run python "src/automatic report generation/generate_radiologist_productivity_reports.py" --help`
 
 ## CI (GitHub Actions)

@@ -1,10 +1,10 @@
 Please do a formatting-only pass on these files to match the style used in `main.py`:
 
-- `src/superstat_cron/critical_findings_watch.py`
-- `src/superstat_cron/superstat_watch.py`
-- `src/superstat_cron/code_stroke_watch.py`
-- `src/superstat_cron/pending_watch.py`
-- `src/superstat_cron/watch_helper.py`
+- `src/scripts/critical_findings_watch.py`
+- `src/scripts/superstat_watch.py`
+- `src/scripts/code_stroke_watch.py`
+- `src/scripts/pending_watch.py`
+- `src/core/watch_helper.py`
 
 Rules:
 1) Do NOT change logic, behavior, variable names, function names, strings, imports, or execution order.

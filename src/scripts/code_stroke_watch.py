@@ -2,7 +2,7 @@
 
 import os  # Read product-specific environment overrides.
 
-from .watch_helper import (   # Import shared helpers so logic stays in one place.
+from src.core.watch_helper import (   # Import shared helpers so logic stays in one place.
     ProductConfig,            # Data holder for product options.
     MAX_AGE_HOURS_DEFAULT,    # Shared default lookback hours.
     MIN_AGE_MINUTES_DEFAULT,  # Shared default minimum age.

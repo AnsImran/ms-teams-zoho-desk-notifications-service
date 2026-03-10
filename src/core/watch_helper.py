@@ -12,6 +12,12 @@ from concurrent.futures import ThreadPoolExecutor         # Send Teams posts in 
 import pytz                     # Keep all local time handling consistent (Los Angeles by default).
 import requests                 # Talk to Zoho Desk and Microsoft Teams over HTTPS.
 from dotenv import load_dotenv  # Pull settings from a .env file automatically.
+from pydantic import ValidationError  # Surface schema-validation failures clearly.
+
+from src.schema.zoho_api_schemas import (  # Validate Zoho API payloads before use.
+    ZohoAccessTokenResponse,
+    ZohoTicketSearchResponse,
+)
 
 # Load environment variables as soon as the module imports.
 load_dotenv()  # Makes later env lookups succeed without manual loading.
@@ -140,8 +146,14 @@ def get_access_token() -> str:                                         # Grab a 
         },           # Close the form data payload.
         timeout=30,  # Safety timeout so we do not hang forever.
     )                                        # End POST request setup and send it.
-    response.raise_for_status()              # Fail loudly on HTTP error.
-    token = response.json()["access_token"]  # Pull the access token out of JSON body.
+    response.raise_for_status()  # Fail loudly on HTTP error.
+    try:                         # Validate Zoho token payload shape before consuming it.
+        token_payload = ZohoAccessTokenResponse.model_validate(response.json())  # Parse with schema.
+    except ValidationError as error:                                              # Re-raise with context.
+        raise RuntimeError(f"Zoho token response failed schema validation: {error}") from error
+    token = (token_payload.access_token or "").strip()                            # Pull and normalize token text.
+    if not token:                                                                 # Protect against blank token values.
+        raise RuntimeError("Zoho token response failed schema validation: access_token is empty.")
 
     created_at = now_utc                                                                            # Record when we fetched it.
     expires_at = created_at + timedelta(seconds=TOKEN_LIFETIME_SECONDS)                             # Compute expiry timestamp.
@@ -424,8 +436,12 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int], page_l
         if response.status_code >= 400:                                                                       # For any other error...
             print("HTTP ERROR", response.status_code, "for", response.url)  # Log details.
             print("Response body:", (response.text or "")[:2000])           # Log short body snippet.
-        response.raise_for_status()                   # Raise on HTTP error.
-        data = response.json().get("data", []) or []  # Extract data list safely.
+        response.raise_for_status()  # Raise on HTTP error.
+        try:                         # Validate Zoho search payload before processing ticket rows.
+            search_payload = ZohoTicketSearchResponse.model_validate(response.json())  # Parse top-level payload.
+        except ValidationError as error:                                                # Raise clear validation failure.
+            raise RuntimeError(f"Zoho search response failed schema validation: {error}") from error
+        data = [ticket.model_dump(mode="python") for ticket in (search_payload.data or [])]  # Convert validated models back to dictionaries for existing code paths.
         if not data:                                  # If page empty...
             break                                                                                             # Stop paginating.
         results.extend(data)       # Add page items to results.

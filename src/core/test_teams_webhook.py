@@ -2,7 +2,7 @@
 Send a tiny Teams Adaptive Card to a webhook to verify which channel/group it maps to.
 
 Usage:
-    python src/superstat_cron/test_teams_webhook.py \
+    python src/core/test_teams_webhook.py \
         --title "Webhook Smoke Test" \
         --note "This is only a test from test_teams_webhook.py"
 

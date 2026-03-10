@@ -6,7 +6,7 @@ on:
       local_path:
         description: Local folder to deploy (relative to repo root)
         required: true
-        default: src/superstat_cron
+        default: src
       dry_run:
         description: If true, rsync runs in --dry-run mode
         type: boolean
