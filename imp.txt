@@ -1,0 +1,18 @@
+Please do a formatting-only pass on these files to match the style used in `main.py`:
+
+- `src/superstat_cron/critical_findings_watch.py`
+- `src/superstat_cron/superstat_watch.py`
+- `src/superstat_cron/code_stroke_watch.py`
+- `src/superstat_cron/pending_watch.py`
+- `src/superstat_cron/watch_helper.py`
+
+Rules:
+1) Do NOT change logic, behavior, variable names, function names, strings, imports, or execution order.
+2) Keep grouping of similar lines consistent with `main.py`.
+3) Normalize spacing/blank lines/indentation for readability.
+4) In each similar contiguous assignment block, align the first `=` across lines.
+5) After aligning `=`, re-align inline comments in that same block.
+6) Remove trailing whitespace.
+7) Keep the edit whitespace/alignment-only (`git diff -w` should show no semantic changes).
+
+After formatting, run a quick syntax check and report completion.

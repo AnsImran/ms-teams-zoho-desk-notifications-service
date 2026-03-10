@@ -29,3 +29,4 @@ credentials
 **/sent_superstat_notifications.json
 **/sent_code_stroke_notifications.json
 **/sent_notifications.json
+**/sent_critical_findings_notifications.json
