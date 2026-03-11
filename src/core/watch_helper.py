@@ -517,7 +517,7 @@ def run_single_product_cycle(                                                   
             web_url          = ticket.get("webUrl", "") or ""                                      # Read web URL for button.
             print(f"[{config.name}] ALERT: Ticket {ticket_number} ({ticket_id}) reason={reason}")  # Log alert intent.
             teams_payload = build_teams_adaptive_card(                                             # Build Teams payload once.
-                title=f"{config.name.upper()} REMINDER (Sent from dev Script)",       # Title with product name.
+                title=f"{config.name.upper()} REMINDER (Automated)",       # Title with product name.
                 summary=f"Ticket {ticket_number} is still NOT resolved.",  # Short summary.
                 banner_text=config.card_banner_text,                       # Optional top banner (used by selected products only).
                 ticket_number=ticket_number,                               # Ticket number.
@@ -714,7 +714,7 @@ def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str) -> N
 
     slot_display = slot_time.strftime("%Y-%m-%d %H:%M:%S %Z")  # Friendly display of the scheduled LA slot.
     payload      = build_pending_tickets_adaptive_card(        # Build adaptive card with pending ticket list.
-        title="Pending Tickets Snapshot (Sent from dev Script)",                                                   # Card title line.
+        title="Pending Tickets Snapshot (Automated)",                                                   # Card title line.
         summary=f"LA slot {slot_display}. Found {len(pending_entries)} pending ticket(s) still open.",  # Summary text.
         pending_ticket_entries=pending_entries,                                                         # Structured entries for aligned FactSet rendering.
     )                                                                                             # Finish payload definition.
