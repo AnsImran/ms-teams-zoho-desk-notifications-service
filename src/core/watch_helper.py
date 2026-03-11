@@ -34,7 +34,8 @@ MAX_AGE_HOURS_DEFAULT   = int(os.getenv("MAX_AGE_HOURS", "24"))                 
 MIN_AGE_MINUTES_DEFAULT = int(os.getenv("MIN_AGE_MINUTES", "5"))                                            # Default minimum ticket age before alerting.
 PAGE_LIMIT              = int(os.getenv("PAGE_LIMIT", "50"))                                                # Hard cap on search pages to avoid endless loops.
 PAGE_SIZE               = int(os.getenv("PAGE_SIZE", "100"))                                                # Page size for Zoho search calls.
-NOTIFY_COOLDOWN_SECONDS = int(os.getenv("NOTIFY_COOLDOWN_SECONDS", str(5 * 60)))                            # Cooldown per ticket before re-alert.
+NOTIFY_COOLDOWN_RAW     = os.getenv("NOTIFY_COOLDOWN_SECONDS", "").strip()                                  # Optional global cooldown override in seconds.
+NOTIFY_COOLDOWN_SECONDS = int(NOTIFY_COOLDOWN_RAW) if NOTIFY_COOLDOWN_RAW else None                        # None means derive cooldown from each product's min-age setting.
 NOTIFY_WORKERS_RAW      = os.getenv("NOTIFY_WORKERS", "").strip()                                           # Raw env value for notify worker count (may be blank).
 NOTIFY_WORKERS          = int(NOTIFY_WORKERS_RAW) if NOTIFY_WORKERS_RAW else None                           # Worker count for Teams posts; None lets Python choose.
 ZOHO_DESK_BASE          = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")                  # Base URL for Zoho Desk.
@@ -62,6 +63,7 @@ class ProductConfig:  # Holds settings for one product watcher.
     last_sent_filename:    str                                          # File name where we remember cooldown timestamps.
     max_age_hours:         int = MAX_AGE_HOURS_DEFAULT                  # How far back to search; defaults to shared value.
     min_age_minutes:       int = MIN_AGE_MINUTES_DEFAULT                # Minimum age before alert; defaults to shared value.
+    notify_cooldown_seconds: Optional[int] = None                       # Optional per-product cooldown override in seconds.
     card_banner_text:      str = ""                                     # Optional top-of-card banner text (used for product-specific instructions).
 
 
@@ -390,6 +392,15 @@ def older_than_min_age(ticket: Dict[str, Any], min_age_minutes: int) -> Tuple[bo
     return True, f"age ok ({int(age.total_seconds() // 60)}m old)"                         # Age is fine.
 
 
+def effective_notify_cooldown_seconds(config: ProductConfig) -> int:  # Compute cooldown seconds used for repeat alerts.
+    """Return cooldown seconds with clear precedence and safe defaults."""  # Brief docstring.
+    if config.notify_cooldown_seconds is not None:                          # Product-specific override wins first.
+        return max(0, int(config.notify_cooldown_seconds))                  # Clamp to non-negative seconds.
+    if NOTIFY_COOLDOWN_SECONDS is not None:                                 # Fall back to global env override when provided.
+        return max(0, int(NOTIFY_COOLDOWN_SECONDS))                         # Clamp to non-negative seconds.
+    return max(0, int(config.min_age_minutes) * 60)                         # Default to product min-age minutes.
+
+
 def should_alert(ticket: Dict[str, Any], compiled_regex: re.Pattern, target_products: List[str], min_age_minutes: int) -> Tuple[bool, str]:  # Decide if a ticket needs an alert.
     """Decide if ticket deserves an alert; return (yes/no, reason)."""  # Docstring.
     if not is_unresolved(ticket):                                       # If ticket already resolved...
@@ -466,6 +477,7 @@ def run_single_product_cycle(                                                   
     """Process one polling cycle for a product; return (hits, changed_flag)."""                                           # Clear docstring.
     hits         = 0                                                                                                      # Count how many alerts we send.
     sent_changed = False                                                                                                  # Track whether we update cooldown file.
+    cooldown_seconds = effective_notify_cooldown_seconds(config)                                                          # Resolve cooldown seconds once per cycle.
     tickets      = pre_fetched_tickets if pre_fetched_tickets is not None else search_tickets(token, statuses=sorted(config.active_statuses), hours=config.max_age_hours)  # Use shared tickets or fetch our own.
     if pre_fetched_tickets is None:                                                                                       # Only log fetch count when this product performed the fetch.
         print(f"[{config.name}] Fetched {len(tickets)} ticket(s) from search endpoint.")                      # Log count for this product.
@@ -495,8 +507,8 @@ def run_single_product_cycle(                                                   
             last_time = last_sent.get(ticket_id)  # Previous send time.
             if last_time:                         # If we sent before...
                 elapsed = (now_local - last_time).total_seconds()  # Seconds since last send.
-                if elapsed < NOTIFY_COOLDOWN_SECONDS:              # If still in cooldown...
-                    wait_minutes = (NOTIFY_COOLDOWN_SECONDS - elapsed) / 60.0                                      # Minutes remaining.
+                if cooldown_seconds > 0 and elapsed < cooldown_seconds:              # If still in cooldown...
+                    wait_minutes = (cooldown_seconds - elapsed) / 60.0                                      # Minutes remaining.
                     print(f"[{config.name}] Skip ticket {ticket_id} - cooldown {wait_minutes:.1f} minutes left.")  # Log skip.
                     continue                                                                                       # Move on.
             ticket_number    = str(ticket.get("ticketNumber", "") or "")                           # For logs and card.
@@ -505,7 +517,7 @@ def run_single_product_cycle(                                                   
             web_url          = ticket.get("webUrl", "") or ""                                      # Read web URL for button.
             print(f"[{config.name}] ALERT: Ticket {ticket_number} ({ticket_id}) reason={reason}")  # Log alert intent.
             teams_payload = build_teams_adaptive_card(                                             # Build Teams payload once.
-                title=f"{config.name.upper()} REMINDER (Automated)",       # Title with product name.
+                title=f"{config.name.upper()} REMINDER (Sent from dev Script)",       # Title with product name.
                 summary=f"Ticket {ticket_number} is still NOT resolved.",  # Short summary.
                 banner_text=config.card_banner_text,                       # Optional top banner (used by selected products only).
                 ticket_number=ticket_number,                               # Ticket number.
@@ -702,7 +714,7 @@ def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str) -> N
 
     slot_display = slot_time.strftime("%Y-%m-%d %H:%M:%S %Z")  # Friendly display of the scheduled LA slot.
     payload      = build_pending_tickets_adaptive_card(        # Build adaptive card with pending ticket list.
-        title="Pending Tickets Snapshot (Automated)",                                                   # Card title line.
+        title="Pending Tickets Snapshot (Sent from dev Script)",                                                   # Card title line.
         summary=f"LA slot {slot_display}. Found {len(pending_entries)} pending ticket(s) still open.",  # Summary text.
         pending_ticket_entries=pending_entries,                                                         # Structured entries for aligned FactSet rendering.
     )                                                                                             # Finish payload definition.
