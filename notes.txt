@@ -16,3 +16,11 @@ Rules:
 7) Keep the edit whitespace/alignment-only (`git diff -w` should show no semantic changes).
 
 After formatting, run a quick syntax check and report completion.
+
+---
+
+run all tests:
+uv run --with pytest pytest -q
+
+uv run --with pytest pytest tests/core/test_watch_helper_search_tickets.py -q
+
