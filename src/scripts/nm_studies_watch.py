@@ -27,7 +27,7 @@ NM_STUDIES_CONFIG = ProductConfig(                                              
     active_statuses       = NM_STUDIES_ACTIVE_STATUSES,                                          # Statuses considered open.
     teams_webhook_env_var = "TEAMS_WEBHOOK_NM_STUDIES",                                          # Env var that stores the Teams webhook for this product.
     last_sent_filename    = "sent_nm_studies_notifications.json",                                # File where cooldown data is stored for this product.
-    max_age_hours         = int(os.getenv("NM_STUDIES_MAX_AGE_HOURS",   MAX_AGE_HOURS_DEFAULT)),   # Lookback hours (override or default).
+    max_age_hours         = int(os.getenv("NM_STUDIES_MAX_AGE_HOURS",   MAX_AGE_HOURS_DEFAULT)),    # Lookback hours (override or default).
     min_age_minutes       = int(os.getenv("NM_STUDIES_MIN_AGE_MINUTES", MIN_AGE_MINUTES_DEFAULT)),  # Minimum age before alert.
     card_banner_text      = NM_STUDIES_BANNER_TEXT,                                                 # Banner shown on NM STUDIES cards.
 )                                                                                                 # Finished building NM Studies config.
