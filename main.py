@@ -9,18 +9,12 @@ from src.core.watch_helper import (  # Import shared helpers we need here.
     CHECK_EVERY_SECONDS,                       # Shared polling interval.
     get_access_token,                          # Shared Zoho token fetcher.
     delete_cooldown_file,                      # Helper to clear cooldown files at startup.
+    run_product_loop_once,                     # Generic one-cycle runner for any ProductConfig.
     search_tickets,                            # Shared Zoho ticket search to fetch once per loop.
 )                                              # End of helper imports list.
 
-from src.scripts import (                      # Product-specific watcher modules.
-    superstat_watch,
-    code_stroke_watch,
-    critical_findings_watch,
-    amendments_watch,
-    nm_studies_watch,
-    it_system_studies_watch,
-    pending_watch
-    )
+from src.scripts import pending_watch                        # Pending summary watcher module (separate scheduled flow).
+from src.scripts.product_registry import load_product_configs_from_env  # Declarative env-driven product configs.
 
 PRODUCT_WORKERS_RAW = os.getenv("PRODUCT_WORKERS", "").strip()                   # Raw env value for product worker count (may be blank).
 PRODUCT_WORKERS     = int(PRODUCT_WORKERS_RAW) if PRODUCT_WORKERS_RAW else None  # Worker count for product threads; None lets Python choose.
@@ -29,32 +23,21 @@ PRODUCT_WORKERS     = int(PRODUCT_WORKERS_RAW) if PRODUCT_WORKERS_RAW else None 
 def run_all_products_loop() -> None:                                              # Keep the infinite loop that services every product.
     """Keep running the watchers forever, sharing one Zoho token each cycle."""   # Layperson-friendly docstring.
     load_dotenv()                                                                 # Make sure env vars from .env are available right away.
+
+    product_configs = load_product_configs_from_env()                             # Build all reminder-product configs from one registry.
+    if not product_configs:                                                       # Safety guard against empty registry.
+        raise RuntimeError("No reminder products are configured in PRODUCT_REGISTRY.")
     
-    delete_cooldown_file(superstat_watch.SUPERSTAT_CONFIG)                        # Reset Super-Stat cooldown file once at startup.
-    delete_cooldown_file(code_stroke_watch.CODE_STROKE_CONFIG)                    # Reset Code Stroke cooldown file once at startup.
-    delete_cooldown_file(critical_findings_watch.CRITICAL_FINDINGS_CONFIG)        # Reset Critical Findings cooldown file once at startup.
-    delete_cooldown_file(amendments_watch.AMENDMENTS_CONFIG)
-    delete_cooldown_file(nm_studies_watch.NM_STUDIES_CONFIG)
-    delete_cooldown_file(it_system_studies_watch.IT_SYSTEM_STUDIES_CONFIG)
+    for product_config in product_configs:                                        # Reset all reminder-product cooldown files once at startup.
+        delete_cooldown_file(product_config)
     pending_watch.delete_pending_schedule_state_file()                            # Reset pending schedule state once at startup.
 
-    shared_statuses = sorted(                                                     # Combine statuses watched by product-specific reminder watchers.
-        superstat_watch.SUPERSTAT_CONFIG.active_statuses                          # Super-Stat statuses.
-        .union(code_stroke_watch.CODE_STROKE_CONFIG.active_statuses)              # Code Stroke statuses.
-        .union(critical_findings_watch.CRITICAL_FINDINGS_CONFIG.active_statuses)  # Critical Findings statuses.
-        .union(amendments_watch.AMENDMENTS_CONFIG.active_statuses)  
-        .union(nm_studies_watch.NM_STUDIES_CONFIG.active_statuses)
-        .union(it_system_studies_watch.IT_SYSTEM_STUDIES_CONFIG.active_statuses)
-    )                                                                             # End shared statuses computation.
+    status_union = set()                                                          # Aggregate status names across all reminder products.
+    for product_config in product_configs:
+        status_union.update(product_config.active_statuses)
+    shared_statuses = sorted(status_union)                                        # Shared status filter used by one pre-fetch search call.
 
-    shared_hours = max(                                                           # Use one lookback that satisfies all watchers.
-        superstat_watch.SUPERSTAT_CONFIG.max_age_hours,                           # Super-Stat lookback.
-        code_stroke_watch.CODE_STROKE_CONFIG.max_age_hours,                       # Code Stroke lookback.
-        critical_findings_watch.CRITICAL_FINDINGS_CONFIG.max_age_hours,           # Critical Findings lookback.
-        amendments_watch.AMENDMENTS_CONFIG.max_age_hours,
-        nm_studies_watch.NM_STUDIES_CONFIG.max_age_hours,
-        it_system_studies_watch.IT_SYSTEM_STUDIES_CONFIG.max_age_hours,
-    )                                                                             # End shared lookback computation.
+    shared_hours = max(product_config.max_age_hours for product_config in product_configs)  # One lookback covering every reminder product.
     
     pending_executor = ThreadPoolExecutor(max_workers=1)                          # Dedicated background worker for pending summary runs.
     pending_future   = None                                                       # Track currently-running pending summary job, if any.
@@ -74,13 +57,10 @@ def run_all_products_loop() -> None:                                            
                     pending_future = pending_executor.submit(pending_watch.run_cycle, token)             # Run pending watcher asynchronously with its own fetch path.
                 tickets = search_tickets(token, statuses=shared_statuses, hours=shared_hours)            # Fetch tickets once for all reminder watchers.
                 with ThreadPoolExecutor(max_workers=PRODUCT_WORKERS) as executor:                        # Spin up a small pool for product-level parallelism.
-                    futures = []                                                                         # Collect futures for all product watchers.
-                    futures.append(executor.submit(superstat_watch.run_cycle,         token, tickets))   # Submit Super-Stat cycle to pool.
-                    futures.append(executor.submit(code_stroke_watch.run_cycle,       token, tickets))   # Submit Code Stroke cycle to pool.
-                    futures.append(executor.submit(critical_findings_watch.run_cycle, token, tickets))   # Submit Critical Findings cycle to pool.
-                    futures.append(executor.submit(amendments_watch.run_cycle,        token, tickets))  
-                    futures.append(executor.submit(nm_studies_watch.run_cycle,        token, tickets))
-                    futures.append(executor.submit(it_system_studies_watch.run_cycle, token, tickets))
+                    futures = [                                                                         # Submit one generic cycle job per product config.
+                        executor.submit(run_product_loop_once, product_config, token, tickets)
+                        for product_config in product_configs
+                    ]
                     for future in futures:                                                               # Wait for all products to finish.
                         future.result()                                                                  # Raise any error that occurred inside the thread.
             except Exception as error:                                                                   # Catch any unexpected problem.

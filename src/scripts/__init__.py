@@ -1,1 +1,1 @@
-"""Entry scripts package for watcher modules and standalone script runners."""
+"""Entry scripts package for product registry and standalone script runners."""

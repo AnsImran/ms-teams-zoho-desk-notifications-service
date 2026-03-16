@@ -14,6 +14,11 @@ Rules:
 5) After aligning `=`, re-align inline comments in that same block.
 6) Remove trailing whitespace.
 7) Keep the edit whitespace/alignment-only (`git diff -w` should show no semantic changes).
+8) For multi-line function parameter blocks that include type annotations and default values, align the annotation/value columns for readability (for example, align types and then align `=` in that contiguous parameter block).
+9) Apply these formatting rules consistently across the entire target file wherever a similar pattern appears, not only in the specifically highlighted snippet.
+10) In multi-line dictionary blocks, align key/value columns consistently (and keep comma placement visually consistent) within that contiguous block.
+11) In repeated single-line function-call blocks with positional arguments, align argument columns by spacing after each comma (keep commas attached to the preceding token).
+12) After aligning call-argument columns, align inline comments consistently across that contiguous block when comments are present.
 
 After formatting, run a quick syntax check and report completion.
 

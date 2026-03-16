@@ -56,7 +56,6 @@ TOKEN_CACHE: Dict[str, Any] = {"token": None, "created_at": None, "expires_at": 
 class ProductConfig:  # Holds settings for one product watcher.
     """Holds the knobs for one product watcher (kept easy to read)."""  # Plain-English class docstring.
     name:                  str                                          # Friendly product label for logs.
-    keyword_regex:         str                                          # Regex that finds product mentions.
     target_product_names:  List[str]                                    # Product names to match exactly (case-insensitive).
     active_statuses:       Set[str]                                     # Status strings considered open.
     teams_webhook_env_var: str                                          # Env var name that stores the Teams webhook for this product.
@@ -347,18 +346,6 @@ def is_unresolved(ticket: Dict[str, Any]) -> bool:                  # Check if t
     return True                                                     # Otherwise still open.
 
 
-def subject_matches(ticket: Dict[str, Any], compiled_regex: re.Pattern) -> bool:  # Test subject text against regex.
-    """Check subject line against compiled regex."""  # Brief docstring.
-    subject = ticket.get("subject") or ""             # Grab subject text.
-    return bool(compiled_regex.search(subject))       # Return True on regex hit.
-
-
-def description_matches(ticket: Dict[str, Any], compiled_regex: re.Pattern) -> bool:  # Test description text against regex.
-    """Check description text against compiled regex."""                            # Brief docstring.
-    description = ticket.get("description") or ticket.get("descriptionText") or ""  # Pick description field.
-    return bool(compiled_regex.search(description))                                 # Return True on regex hit.
-
-
 def product_matches(ticket: Dict[str, Any], target_products: List[str]) -> bool:  # Compare ticket product names to target list.
     """Check ticket product fields against target list (case-insensitive)."""  # Docstring.
     if not target_products:                                                    # If no target list supplied...
@@ -401,20 +388,14 @@ def effective_notify_cooldown_seconds(config: ProductConfig) -> int:  # Compute 
     return max(0, int(config.min_age_minutes) * 60)                         # Default to product min-age minutes.
 
 
-def should_alert(ticket: Dict[str, Any], compiled_regex: re.Pattern, target_products: List[str], min_age_minutes: int) -> Tuple[bool, str]:  # Decide if a ticket needs an alert.
-    """Decide if ticket deserves an alert; return (yes/no, reason)."""  # Docstring.
-    if not is_unresolved(ticket):                                       # If ticket already resolved...
-        return False, "resolved/closed"                                                                       # Explain no.
-    if product_matches(ticket, target_products):                                                              # If product matches...
-        ok, reason = older_than_min_age(ticket, min_age_minutes)  # Check age.
-        return ok, f"product match; {reason}"                     # Return result.
-    if subject_matches(ticket, compiled_regex):                                                               # If subject matches keyword...
-        ok, reason = older_than_min_age(ticket, min_age_minutes)  # Check age.
-        return ok, f"subject keyword match; {reason}"             # Return result.
-    if description_matches(ticket, compiled_regex):                                                           # If description matches...
-        ok, reason = older_than_min_age(ticket, min_age_minutes)  # Check age.
-        return ok, f"description keyword match; {reason}"         # Return result.
-    return False, "no match"                                                                                  # Nothing matched.
+def should_alert(ticket: Dict[str, Any], target_products: List[str], min_age_minutes: int) -> Tuple[bool, str]:  # Decide if a ticket needs an alert.
+    """Decide if ticket deserves an alert using product-name matching only."""  # Docstring.
+    if not is_unresolved(ticket):                                                   # If ticket already resolved...
+        return False, "resolved/closed"                                             # Explain no.
+    if not product_matches(ticket, target_products):                                # Product match is now mandatory.
+        return False, "no product match"                                            # Explain mismatch.
+    ok, reason = older_than_min_age(ticket, min_age_minutes)                        # Check age when product matches.
+    return ok, f"product match; {reason}"                                            # Return age result.
 
 # -----------------------------
 # Zoho search
@@ -470,7 +451,6 @@ def run_single_product_cycle(                                                   
     *,                                                                                                        # Force keyword arguments for clarity.
     config:              ProductConfig,                                                                       # Product-specific settings.
     token:               str,                                                                                 # Shared Zoho access token.
-    compiled_regex:      re.Pattern,                                                                          # Compiled regex for keyword matches.
     last_sent:           Dict[str, datetime],                                                                 # Cooldown memory map.
     pre_fetched_tickets: List[Dict[str, Any]] = None,                                                         # Optional shared tickets list to avoid extra fetch.
 ) -> Tuple[int, bool]:                                                                                        # Return count of hits and whether state changed.
@@ -502,7 +482,7 @@ def run_single_product_cycle(                                                   
                 created_display = created_raw or "(unknown)"                                                  # Fallback display.
             if created_la and created_la < now_la() - timedelta(hours=config.max_age_hours):                  # If ticket is older than this product's window...
                 continue                                                                                      # Skip because it is outside the product window.
-            should, reason = should_alert(ticket, compiled_regex, config.target_product_names, config.min_age_minutes)  # Decide alert.
+            should, reason = should_alert(ticket, config.target_product_names, config.min_age_minutes)  # Decide alert.
             if not should:                                                                                    # If no alert...
                 continue                                                                                      # Skip to next ticket.
 
@@ -560,11 +540,9 @@ def run_product_loop_once(config: ProductConfig, token: str, pre_fetched_tickets
     if not os.path.exists(last_sent_path):                                                                    # If file absent...
         print(f"[{config.name}] No existing cooldown file found; starting fresh.")                            # Log info.
     last_sent      = load_last_sent(last_sent_path)                                                           # Load cooldown data.
-    compiled_regex = re.compile(config.keyword_regex, re.IGNORECASE)                                          # Compile product regex once.
     hits, changed  = run_single_product_cycle(                                                                # Run one cycle of work.
         config              = config,                                                                         # Pass the product settings.
         token               = token,                                                                          # Pass the shared Zoho token.
-        compiled_regex      = compiled_regex,                                                                 # Pass compiled regex.
         last_sent           = last_sent,                                                                      # Pass cooldown memory.
         pre_fetched_tickets = pre_fetched_tickets,                                                            # Pass shared tickets if present.
     )                                                                                                         # End cycle call.
