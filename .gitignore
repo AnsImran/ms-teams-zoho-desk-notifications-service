@@ -30,6 +30,7 @@ credentials
 **/sent_code_stroke_notifications.json
 **/sent_notifications.json
 **/sent_critical_findings_notifications.json
+**/sent_reading_requests_notifications.json
 
 # Local-only module (kept locally, managed in separate repository later)
 src/automatic report generation/

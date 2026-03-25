@@ -86,6 +86,13 @@ PRODUCT_CASES = [
         default_target_products     = ["it / system studies"],
     ),
     ProductCase(
+        case_id                     = "reading_requests",
+        product_id                  = "reading_requests",
+        prefix                      = "READING_REQUESTS",
+        use_global_target_fallback  = False,
+        default_target_products     = ["reading requests"],
+    ),
+    ProductCase(
         case_id                     = "password_reset",
         product_id                  = "password_reset",
         prefix                      = "PASSWORD_RESET",

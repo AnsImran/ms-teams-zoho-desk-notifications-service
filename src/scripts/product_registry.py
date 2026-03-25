@@ -66,6 +66,14 @@ PRODUCT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "default_target_product_names": ["it / system studies"],
         "use_global_target_fallback": False,
     },
+    "reading_requests": {
+        "prefix": "READING_REQUESTS",
+        "name": "Reading Requests",
+        "teams_webhook_env_var": "TEAMS_WEBHOOK_READING_REQUESTS",
+        "last_sent_filename": "sent_reading_requests_notifications.json",
+        "default_target_product_names": ["reading requests"],
+        "use_global_target_fallback": False,
+    },
     "password_reset": {
         "prefix": "PASSWORD_RESET",
         "name": "Password Reset",
