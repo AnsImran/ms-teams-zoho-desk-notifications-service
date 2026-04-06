@@ -136,12 +136,12 @@ def test_run_single_product_cycle_calls_search_when_prefetched_missing(monkeypat
     """When pre_fetched_tickets are missing, search_tickets should be called with sorted statuses."""  # Branch: fetch path.
     calls: List[Dict[str, Any]] = []
 
-    def fake_search(token: str, statuses: List[str], hours: int) -> List[Dict[str, Any]]:
+    def fake_search(token: str, statuses: List[str], product_names=None) -> List[Dict[str, Any]]:
         calls.append(
             {
-                "token":    token,
-                "statuses": statuses,
-                "hours":    hours,
+                "token":         token,
+                "statuses":      statuses,
+                "product_names": product_names,
             }
         )
         return []
@@ -157,12 +157,12 @@ def test_run_single_product_cycle_calls_search_when_prefetched_missing(monkeypat
         pre_fetched_tickets = None,
     )
 
-    assert hits                 == 0
+    assert hits                      == 0
     assert changed is False
-    assert len(calls)           == 1
-    assert calls[0]["token"]    == "token-abc"
-    assert calls[0]["statuses"] == sorted(product_config.active_statuses)
-    assert calls[0]["hours"]    == product_config.max_age_hours
+    assert len(calls)                == 1
+    assert calls[0]["token"]         == "token-abc"
+    assert calls[0]["statuses"]      == sorted(product_config.active_statuses)
+    assert calls[0]["product_names"] == product_config.target_product_names
 
 
 def test_run_single_product_cycle_skips_ticket_when_id_missing(monkeypatch, product_config) -> None:
@@ -206,32 +206,6 @@ def test_run_single_product_cycle_skips_ticket_when_status_not_active(monkeypatc
         token               = "token-123",
         last_sent           = {},
         pre_fetched_tickets = [_make_ticket(status="Closed")],
-    )
-
-    assert hits                        == 0
-    assert changed is False
-    assert should_alert_calls["count"] == 0
-
-
-def test_run_single_product_cycle_skips_ticket_older_than_window(monkeypatch, product_config, fixed_now) -> None:
-    """Tickets older than max_age_hours should be skipped before should_alert."""  # Branch: age window filter.
-    should_alert_calls = {"count": 0}
-
-    def fake_should_alert(*_args, **_kwargs):
-        should_alert_calls["count"] += 1
-        return True, "should not run"
-
-    monkeypatch.setattr(watch_helper, "effective_notify_cooldown_seconds", lambda _cfg: 0)
-    monkeypatch.setattr(watch_helper, "parse_zoho_time_assume_la",         lambda _raw: fixed_now - timedelta(hours=30))
-    monkeypatch.setattr(watch_helper, "now_la",                            lambda: fixed_now)
-    monkeypatch.setattr(watch_helper, "should_alert",                      fake_should_alert)
-    _install_fake_executor(monkeypatch)
-
-    hits, changed = watch_helper.run_single_product_cycle(
-        config              = product_config,
-        token               = "token-123",
-        last_sent           = {},
-        pre_fetched_tickets = [_make_ticket()],
     )
 
     assert hits                        == 0

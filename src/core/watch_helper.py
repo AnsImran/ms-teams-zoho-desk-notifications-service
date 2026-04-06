@@ -377,8 +377,8 @@ def should_alert(ticket: Dict[str, Any], target_products: List[str], min_age_min
 # Zoho search
 # -----------------------------
 
-def search_tickets(token: str, statuses: List[str], hours: Optional[int], page_limit: Optional[int] = PAGE_LIMIT) -> List[Dict[str, Any]]:  # Pull tickets from Zoho with optional filters.
-    """Search Zoho Desk for tickets in statuses, optionally constrained by a lookback window."""  # Docstring.
+def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None, product_names: Optional[List[str]] = None, page_limit: Optional[int] = PAGE_LIMIT) -> List[Dict[str, Any]]:  # Pull tickets from Zoho with optional filters.
+    """Search Zoho Desk for tickets by status and optionally by product names."""  # Docstring.
     url                           = f"{ZOHO_DESK_BASE}/api/v1/tickets/search"                     # Build search URL.
     statuses_param                = ",".join(statuses)                                            # Join statuses for Zoho parameter.
     results: List[Dict[str, Any]] = []                                                            # Aggregate list for pages.
@@ -393,6 +393,8 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int], page_l
             "from":   start,             # Pagination start.
             "limit":  PAGE_SIZE,         # Page size.
         }                      # Finished building params dictionary.
+        if product_names:      # Add product name filter when provided.
+            params["productName"] = ",".join(product_names)                                                   # Comma-separated product names.
         if hours is not None:  # Add lookback filter only when caller requests one.
             params["createdTimeRange"] = created_time_range_la(hours)                                         # Time window filter.
         if use_sort:                                                                                          # Only include sort when allowed.
@@ -436,7 +438,7 @@ def run_single_product_cycle(                                                   
     hits             = 0                                                                                      # Count how many alerts we send.
     sent_changed     = False                                                                                  # Track whether we update cooldown file.
     cooldown_seconds = effective_notify_cooldown_seconds(config)                                              # Resolve cooldown seconds once per cycle.
-    tickets          = pre_fetched_tickets if pre_fetched_tickets is not None else search_tickets(token, statuses=sorted(config.active_statuses), hours=config.max_age_hours)  # Use shared tickets or fetch our own.
+    tickets          = pre_fetched_tickets if pre_fetched_tickets is not None else search_tickets(token, statuses=sorted(config.active_statuses), product_names=config.target_product_names)  # Use shared tickets or fetch our own.
     if pre_fetched_tickets is None:                                                                           # Only log fetch count when this product performed the fetch.
         print(f"[{config.name}] Fetched {len(tickets)} ticket(s) from search endpoint.")                      # Log count for this product.
     
@@ -458,8 +460,7 @@ def run_single_product_cycle(                                                   
                 created_la      = None                                                                        # Mark as unknown time.
                 age_minutes     = -1                                                                          # Unknown age marker.
                 created_display = created_raw or "(unknown)"                                                  # Fallback display.
-            if created_la and created_la < now_la() - timedelta(hours=config.max_age_hours):                  # If ticket is older than this product's window...
-                continue                                                                                      # Skip because it is outside the product window.
+            # No max_age_hours filtering — we fetch all tickets for the product since the beginning of time.
             should, reason = should_alert(ticket, config.target_product_names, config.min_age_minutes)  # Decide alert.
             if not should:                                                                                    # If no alert...
                 continue                                                                                      # Skip to next ticket.

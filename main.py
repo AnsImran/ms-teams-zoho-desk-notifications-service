@@ -33,11 +33,12 @@ def run_all_products_loop() -> None:                                            
     pending_watch.delete_pending_schedule_state_file()                            # Reset pending schedule state once at startup.
 
     status_union = set()                                                          # Aggregate status names across all reminder products.
+    product_name_set = set()                                                      # Aggregate product names across all reminder products.
     for product_config in product_configs:
         status_union.update(product_config.active_statuses)
-    shared_statuses = sorted(status_union)                                        # Shared status filter used by one pre-fetch search call.
-
-    shared_hours = max(product_config.max_age_hours for product_config in product_configs)  # One lookback covering every reminder product.
+        product_name_set.update(product_config.target_product_names)
+    shared_statuses      = sorted(status_union)                                   # Shared status filter used by one pre-fetch search call.
+    shared_product_names = sorted(product_name_set)                               # All product names for Zoho productName filter.
     
     pending_executor = ThreadPoolExecutor(max_workers=1)                          # Dedicated background worker for pending summary runs.
     pending_future   = None                                                       # Track currently-running pending summary job, if any.
@@ -55,7 +56,7 @@ def run_all_products_loop() -> None:                                            
                     pending_future = None                                                                # Clear completed job handle.
                 if pending_future is None:                                                               # Submit only when no pending worker job is currently running.
                     pending_future = pending_executor.submit(pending_watch.run_cycle, token)             # Run pending watcher asynchronously with its own fetch path.
-                tickets = search_tickets(token, statuses=shared_statuses, hours=shared_hours)            # Fetch tickets once for all reminder watchers.
+                tickets = search_tickets(token, statuses=shared_statuses, product_names=shared_product_names)  # Fetch tickets once for all reminder watchers.
                 with ThreadPoolExecutor(max_workers=PRODUCT_WORKERS) as executor:                        # Spin up a small pool for product-level parallelism.
                     futures = [                                                                         # Submit one generic cycle job per product config.
                         executor.submit(run_product_loop_once, product_config, token, tickets)
