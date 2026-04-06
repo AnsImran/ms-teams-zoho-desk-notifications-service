@@ -15,7 +15,6 @@ from dotenv import load_dotenv  # Pull settings from a .env file automatically.
 from pydantic import ValidationError  # Surface schema-validation failures clearly.
 
 from src.schema.zoho_api_schemas import (  # Validate Zoho API payloads before use.
-    ZohoAccessTokenResponse,
     ZohoTicketSearchResponse,
 )
 
@@ -44,9 +43,7 @@ ZOHO_ACCOUNTS_TOKEN_URL = os.getenv("ZOHO_ACCOUNTS_TOKEN_URL", "https://accounts
 MAGIC_TEST_WEBHOOK = "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM"  # Shared test webhook for magic phrase.
 MAGIC_TRIGGER      = os.getenv("MAGIC_TEST_TRIGGER_PHRASE", "test ticket by magic ai").strip().lower()      # Magic phrase text.
 
-TOKEN_LIFETIME_SECONDS      = 3600                                                     # Zoho access tokens last one hour.
-TOKEN_RENEW_GRACE_SECONDS   = 10 * 60                                                  # Refresh when less than ten minutes remain.
-TOKEN_CACHE: Dict[str, Any] = {"token": None, "created_at": None, "expires_at": None}  # Simple in-memory token cache.
+TOKEN_SERVICE_URL = os.getenv("TOKEN_SERVICE_URL", "http://host.docker.internal:8000").rstrip("/")  # Centralized Zoho token service on the host.
 
 # -----------------------------
 # Simple config container
@@ -128,39 +125,18 @@ def created_time_range_la(hours: int) -> str:                               # Ma
 # Zoho token handling
 # -----------------------------
 
-def get_access_token() -> str:                                         # Grab a Zoho access token, reusing cache when safe.
-    """Fetch or reuse a Zoho access token using the refresh token."""  # Docstring summarizing goal.
-    now_utc = datetime.now(timezone.utc)                               # Current UTC time for expiry math.
-    if TOKEN_CACHE["token"] and TOKEN_CACHE["expires_at"]:             # If we already have a cached token...
-        remaining = TOKEN_CACHE["expires_at"] - now_utc                # Calculate how long it stays valid.
-        if remaining > timedelta(seconds=TOKEN_RENEW_GRACE_SECONDS):   # If still safely valid...
-            print(f"Reusing cached Zoho access token (expires in {remaining.total_seconds() / 60:.1f} minutes).")  # Log reuse.
-            return TOKEN_CACHE["token"]                                                                            # Hand back the cached token.
-
-    response = requests.post(                                     # Start a POST request to get a fresh token.
-        ZOHO_ACCOUNTS_TOKEN_URL,  # Token endpoint URL.
-        data={                    # Form fields Zoho expects.
-            "refresh_token": env_required("ZOHO_REFRESH_TOKEN"),     # Long-lived refresh token.
-            "client_id":     env_required("ZOHO_CLIENT_ID"),         # Zoho client id.
-            "client_secret": env_required("ZOHO_CLIENT_SECRET"),     # Zoho client secret.
-            "grant_type":    "refresh_token",                        # Grant type telling Zoho what we want.
-        },           # Close the form data payload.
-        timeout=30,  # Safety timeout so we do not hang forever.
-    )                                        # End POST request setup and send it.
-    response.raise_for_status()  # Fail loudly on HTTP error.
-    try:                         # Validate Zoho token payload shape before consuming it.
-        token_payload = ZohoAccessTokenResponse.model_validate(response.json())  # Parse with schema.
-    except ValidationError as error:                                              # Re-raise with context.
-        raise RuntimeError(f"Zoho token response failed schema validation: {error}") from error
-    token = (token_payload.access_token or "").strip()                            # Pull and normalize token text.
-    if not token:                                                                 # Protect against blank token values.
-        raise RuntimeError("Zoho token response failed schema validation: access_token is empty.")
-
-    created_at = now_utc                                                                            # Record when we fetched it.
-    expires_at = created_at + timedelta(seconds=TOKEN_LIFETIME_SECONDS)                             # Compute expiry timestamp.
-    TOKEN_CACHE.update({"token": token, "created_at": created_at, "expires_at": expires_at})        # Save in cache.
-    print(f"Fetched new Zoho access token (valid for {TOKEN_LIFETIME_SECONDS / 60:.0f} minutes).")  # Log fetch.
-    return token                                                                                    # Return the fresh token.
+def get_token_from_service() -> str:                                                       # Fetch Zoho token from the internal token microservice.
+    """Fetch the current Zoho access token from the internal token service."""             # Docstring summarizing goal.
+    url = f"{TOKEN_SERVICE_URL}/token"                                                     # Build the token endpoint URL.
+    try:                                                                                   # Wrap in try so connection errors are clear.
+        response = requests.get(url, timeout=10)                                           # GET the cached token from the service.
+        response.raise_for_status()                                                        # Fail loudly on HTTP error.
+    except requests.RequestException as error:                                             # Catch any network or HTTP problem.
+        raise RuntimeError(f"Token service unreachable at {url}: {error}") from error      # Re-raise with context.
+    token = (response.json().get("access_token") or "").strip()                            # Pull and normalize token text.
+    if not token:                                                                          # Protect against blank token values.
+        raise RuntimeError(f"Token service returned empty access_token from {url}.")       # Clear error.
+    return token                                                                           # Return the fresh token.
 
 
 def desk_headers(token: str) -> Dict[str, str]:           # Build headers needed for Zoho Desk calls.

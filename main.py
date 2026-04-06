@@ -7,7 +7,7 @@ from dotenv import load_dotenv                     # Load environment values fro
 
 from src.core.watch_helper import (  # Import shared helpers we need here.
     CHECK_EVERY_SECONDS,                       # Shared polling interval.
-    get_access_token,                          # Shared Zoho token fetcher.
+    get_token_from_service,                     # Fetch Zoho token from internal token service.
     delete_cooldown_file,                      # Helper to clear cooldown files at startup.
     run_product_loop_once,                     # Generic one-cycle runner for any ProductConfig.
     search_tickets,                            # Shared Zoho ticket search to fetch once per loop.
@@ -46,7 +46,7 @@ def run_all_products_loop() -> None:                                            
     try:                                                                                                 # Ensure we always close the pending executor on shutdown.
         while True:                                                                                      # Repeat forever until manually stopped.
             try:                                                                                         # Protect the loop so one failure does not kill the process.
-                token = get_access_token()                                                               # Fetch or reuse the Zoho access token (good for about an hour).
+                token = get_token_from_service()                                                          # Fetch the Zoho access token from the internal token service.
                 if pending_future is not None and pending_future.done():                                 # Collect completed pending job results before launching next one.
                     try:                                                                                 # Surface pending worker exceptions without killing main loop.
                         pending_future.result()                                                          # Raise any exception thrown inside pending worker.

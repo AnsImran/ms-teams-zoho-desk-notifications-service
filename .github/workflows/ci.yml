@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
     branches: [main]
 
@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  ci:
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,9 +36,12 @@ jobs:
       - name: Compile Python
         run: uv run python -m compileall -q main.py src
 
+      - name: Run tests
+        run: uv run --with pytest pytest tests/ -q
+
   deploy:
-    name: Deploy (auto)
-    needs: ci
+    name: Deploy (container)
+    needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
@@ -68,7 +72,7 @@ jobs:
           if [ -z "$PORT" ]; then PORT="22"; fi
           ssh-keyscan -p "$PORT" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Update repo on server (git)
+      - name: Pull and redeploy container
         shell: bash
         run: |
           set -euo pipefail
@@ -76,32 +80,22 @@ jobs:
           if [ -z "$PORT" ]; then PORT="22"; fi
 
           DEPLOY_GIT_PATH_B64="$(printf '%s' "${{ secrets.DEPLOY_GIT_PATH }}" | base64 -w0)"
-          DEPLOY_POST_COMMAND_B64=""
-          if [ -n "${{ secrets.DEPLOY_POST_COMMAND }}" ]; then
-            DEPLOY_POST_COMMAND_B64="$(printf '%s' "${{ secrets.DEPLOY_POST_COMMAND }}" | base64 -w0)"
-          fi
 
           ssh -p "$PORT" -i ~/.ssh/id_ed25519 "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-            "DEPLOY_GIT_PATH_B64='$DEPLOY_GIT_PATH_B64' DEPLOY_POST_COMMAND_B64='$DEPLOY_POST_COMMAND_B64' bash -s" <<'EOS'
+            "DEPLOY_GIT_PATH_B64='$DEPLOY_GIT_PATH_B64' bash -s" <<'EOS'
           set -euo pipefail
           export GIT_TERMINAL_PROMPT=0
 
           deploy_git_path="$(printf '%s' "$DEPLOY_GIT_PATH_B64" | base64 -d)"
-          if [ -z "$deploy_git_path" ]; then
-            echo "DEPLOY_GIT_PATH is empty"
-            exit 1
-          fi
-
           cd "$deploy_git_path"
-          git rev-parse --is-inside-work-tree >/dev/null
+
           git fetch --prune origin main
           git checkout main
           git reset --hard origin/main
 
-          if [ -n "${DEPLOY_POST_COMMAND_B64:-}" ]; then
-            post_command="$(printf '%s' "$DEPLOY_POST_COMMAND_B64" | base64 -d)"
-            if [ -n "$post_command" ]; then
-              bash -lc "$post_command"
-            fi
-          fi
+          docker compose up --build -d
+
+          echo "Waiting for notification-service to start..."
+          sleep 5
+          docker compose ps
           EOS

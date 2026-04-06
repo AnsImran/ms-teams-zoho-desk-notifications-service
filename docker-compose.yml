@@ -1,0 +1,12 @@
+services:
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.notification
+    container_name: notification-service
+    env_file: .env
+    environment:
+      TOKEN_SERVICE_URL: http://host.docker.internal:8000  # Token service running on the same host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Allows container to reach host's 127.0.0.1 ports.
+    restart: unless-stopped
