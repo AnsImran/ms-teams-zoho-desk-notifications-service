@@ -66,7 +66,7 @@ def test_search_tickets_uses_fixture_payload_and_returns_validated_rows(monkeypa
         captured_call["headers"] = headers  # Authorization/org headers.
         captured_call["params"]  = params   # Query parameters built by search_tickets().
         captured_call["timeout"] = timeout  # Timeout configured by function.
-        return StubResponse(status_code=200, payload=payload, url=f"{url}?mock=true")  # One successful page.
+        return StubResponse(status_code=200, payload=payload, url=f"{url}?mock=true", text=json.dumps(payload))  # One successful page.
 
     monkeypatch.setattr(watch_helper.requests, "get", fake_get)  # Replace network call with local stub.
 

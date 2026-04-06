@@ -405,6 +405,8 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int], page_l
             print("HTTP ERROR", response.status_code, "for", response.url)  # Log details.
             print("Response body:", (response.text or "")[:2000])           # Log short body snippet.
         response.raise_for_status()  # Raise on HTTP error.
+        if not response.text.strip():                                                                    # Zoho returns empty body when search has no results.
+            break                                                                                        # Treat empty body as zero results and stop paginating.
         try:                         # Validate Zoho search payload before processing ticket rows.
             search_payload = ZohoTicketSearchResponse.model_validate(response.json())  # Parse top-level payload.
         except ValidationError as error:                                                # Raise clear validation failure.
