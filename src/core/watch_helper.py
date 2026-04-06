@@ -336,7 +336,7 @@ def product_matches(ticket: Dict[str, Any], target_products: List[str]) -> bool:
                 nested = value.get(sub_key)                     # Read nested value.
                 if isinstance(nested, str) and nested.strip():  # If usable string...
                     candidates.append(nested.strip())                             # Save it.
-    target_lower = {t.lower() for t in target_products}                            # Build lower-case set once for fast lookup.
+    target_lower = {t.lower() for t in target_products}                             # Build lower-case set once for fast lookup.
     for name in candidates:                                                       # Walk through collected names.
         if name.lower() in target_lower:                                          # Case-insensitive comparison.
             return True                                                           # Found a match.
@@ -394,13 +394,13 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None,
             "from":   start,             # Pagination start.
             "limit":  PAGE_SIZE,         # Page size.
         }                      # Finished building params dictionary.
-        if product_names:      # Add product name filter when provided.
-            params["productName"] = ",".join(product_names)                                                   # Comma-separated product names.
+        if product_names:                                                                                     # Add product name filter when provided.
+            params["productName"] = ",".join(product_names)                                                   # Comma-separated product names for Zoho server-side filtering.
         if hours is not None:  # Add lookback filter only when caller requests one.
             params["createdTimeRange"] = created_time_range_la(hours)                                         # Time window filter.
         if use_sort:                                                                                          # Only include sort when allowed.
             params["sortBy"] = "-createdTime"                                                                 # Ask for newest first.
-        print(f"[search] GET {url} params={params}")                                            # Log query for debugging.
+        print(f"[search] GET {url} params={params}")                                                         # Log the full query for debugging.
         response = requests.get(url, headers=desk_headers(token), params=params, timeout=30)  # Fire request.
         if response.status_code == 422 and use_sort:                                          # If sort is not supported here...
             use_sort = False  # Disable sort and retry same page.
@@ -409,8 +409,8 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None,
             print("HTTP ERROR", response.status_code, "for", response.url)  # Log details.
             print("Response body:", (response.text or "")[:2000])           # Log short body snippet.
         response.raise_for_status()  # Raise on HTTP error.
-        if not response.text.strip():                                                                    # Zoho returns empty body when search has no results.
-            break                                                                                        # Treat empty body as zero results and stop paginating.
+        if not response.text.strip():                                                                         # Zoho returns empty body when search has no results.
+            break                                                                                             # Treat empty body as zero results and stop paginating.
         try:                         # Validate Zoho search payload before processing ticket rows.
             search_payload = ZohoTicketSearchResponse.model_validate(response.json())  # Parse top-level payload.
         except ValidationError as error:                                                # Raise clear validation failure.
@@ -462,7 +462,6 @@ def run_single_product_cycle(                                                   
                 created_la      = None                                                                        # Mark as unknown time.
                 age_minutes     = -1                                                                          # Unknown age marker.
                 created_display = created_raw or "(unknown)"                                                  # Fallback display.
-            # No max_age_hours filtering — we fetch all tickets for the product since the beginning of time.
             should, reason = should_alert(ticket, config.target_product_names, config.min_age_minutes)  # Decide alert.
             if not should:                                                                                    # If no alert...
                 continue                                                                                      # Skip to next ticket.

@@ -32,13 +32,13 @@ def run_all_products_loop() -> None:                                            
         delete_cooldown_file(product_config)
     pending_watch.delete_pending_schedule_state_file()                            # Reset pending schedule state once at startup.
 
-    status_union = set()                                                          # Aggregate status names across all reminder products.
+    status_union     = set()                                                      # Aggregate status names across all reminder products.
     product_name_set = set()                                                      # Aggregate product names across all reminder products.
-    for product_config in product_configs:
-        status_union.update(product_config.active_statuses)
-        product_name_set.update(product_config.target_product_names)
+    for product_config in product_configs:                                        # Walk every product config to build shared filter sets.
+        status_union.update(product_config.active_statuses)                       # Add this product's watched statuses.
+        product_name_set.update(product_config.target_product_names)              # Add this product's target names.
     shared_statuses      = sorted(status_union)                                   # Shared status filter used by one pre-fetch search call.
-    shared_product_names = sorted(product_name_set)                               # All product names for Zoho productName filter.
+    shared_product_names = sorted(product_name_set)                               # All product names sent to Zoho productName filter.
     
     pending_executor = ThreadPoolExecutor(max_workers=1)                          # Dedicated background worker for pending summary runs.
     pending_future   = None                                                       # Track currently-running pending summary job, if any.
