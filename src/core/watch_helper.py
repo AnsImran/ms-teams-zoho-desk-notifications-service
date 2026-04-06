@@ -399,6 +399,7 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None,
             params["createdTimeRange"] = created_time_range_la(hours)                                         # Time window filter.
         if use_sort:                                                                                          # Only include sort when allowed.
             params["sortBy"] = "-createdTime"                                                                 # Ask for newest first.
+        print(f"[search] GET {url} params={params}")                                            # Log query for debugging.
         response = requests.get(url, headers=desk_headers(token), params=params, timeout=30)  # Fire request.
         if response.status_code == 422 and use_sort:                                          # If sort is not supported here...
             use_sort = False  # Disable sort and retry same page.
