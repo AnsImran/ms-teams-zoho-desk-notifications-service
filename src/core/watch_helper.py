@@ -336,8 +336,9 @@ def product_matches(ticket: Dict[str, Any], target_products: List[str]) -> bool:
                 nested = value.get(sub_key)                     # Read nested value.
                 if isinstance(nested, str) and nested.strip():  # If usable string...
                     candidates.append(nested.strip())                             # Save it.
+    target_lower = {t.lower() for t in target_products}                            # Build lower-case set once for fast lookup.
     for name in candidates:                                                       # Walk through collected names.
-        if name.lower() in target_products:                                       # Case-insensitive comparison.
+        if name.lower() in target_lower:                                          # Case-insensitive comparison.
             return True                                                           # Found a match.
     return False                                                                  # No matches.
 

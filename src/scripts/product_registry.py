@@ -118,9 +118,9 @@ def _csv_set(raw_text: str) -> set[str]:  # Convert comma text into a set of tri
     return {entry.strip() for entry in raw_text.split(",") if entry.strip()}
 
 
-def _csv_lower_list(raw_text: str) -> List[str]:  # Convert comma text into a lower-case list preserving order.
-    """Parse comma-separated text into a lower-case list of non-empty values."""  # Brief docstring.
-    return [entry.strip().lower() for entry in raw_text.split(",") if entry.strip()]
+def _csv_list(raw_text: str) -> List[str]:  # Convert comma text into a list preserving original casing.
+    """Parse comma-separated text into a list of non-empty values with original casing."""  # Brief docstring.
+    return [entry.strip() for entry in raw_text.split(",") if entry.strip()]
 
 
 def build_product_config(product_id: str, spec: Dict[str, Any]) -> ProductConfig:  # Build one ProductConfig from registry + env values.
@@ -148,7 +148,7 @@ def build_product_config(product_id: str, spec: Dict[str, Any]) -> ProductConfig
 
     return ProductConfig(
         name                    = str(spec["name"]),
-        target_product_names    = _csv_lower_list(target_raw),
+        target_product_names    = _csv_list(target_raw),
         active_statuses         = _csv_set(active_raw),
         teams_webhook_env_var   = str(spec["teams_webhook_env_var"]),
         last_sent_filename      = str(spec["last_sent_filename"]),
