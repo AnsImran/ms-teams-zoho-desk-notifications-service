@@ -6,7 +6,11 @@ services:
     container_name: notification-service
     env_file: .env
     environment:
-      TOKEN_SERVICE_URL: http://host.docker.internal:8000  # Token service running on the same host.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # Allows container to reach host's 127.0.0.1 ports.
+      TOKEN_SERVICE_URL: http://token-service:8000  # Reach token-service via shared Docker network.
+    networks:
+      - zoho-token-service_default  # Join the token service's network so DNS resolves.
     restart: unless-stopped
+
+networks:
+  zoho-token-service_default:
+    external: true  # Created by the zoho-token-service compose stack.
