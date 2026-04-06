@@ -14,13 +14,12 @@ flowchart LR
     end
 
     subgraph EC2["EC2 Server — Docker Network"]
-        TS["Token Service<br>FastAPI :8000<br>auto-refresh ~58 min"]
+        TS["Centralized Token Service<br>FastAPI :8000<br>auto-refresh ~58 min<br>(separate repo)"]
         NS["Notification Service<br>Python 3.12 main.py<br>polls every 30 sec"]
     end
 
-    subgraph Zoho["Zoho Cloud"]
-        ZA["Zoho Accounts<br>OAuth endpoint"]
-        ZD["Zoho Desk API<br>tickets/search"]
+    subgraph Zoho["Zoho Desk API"]
+        ZD["tickets/search"]
     end
 
     subgraph Teams["Microsoft Teams"]
@@ -29,8 +28,7 @@ flowchart LR
 
     ENV -. "loads" .-> NS
     REG -. "builds config" .-> NS
-    TS -- "refresh_token" --> ZA
-    NS -- "GET /token" --> TS
+    NS -- "GET /token<br>(receives access token)" --> TS
     NS -- "search by product + status" --> ZD
     NS -- "POST Adaptive Cards" --> WH
 ```
@@ -39,13 +37,20 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A["Fetch Token<br>from Token Service"] --> B["Search Zoho<br>All products + statuses<br>in one API call"]
+    A["Fetch Token<br>from Token Service"] --> B["Search Zoho<br>all products + statuses<br>in one API call"]
     B --> C["Fan Out<br>to 11 product workers<br>(thread pool)"]
-    C --> D{"For each ticket:<br>1. Status active?<br>2. Product match?<br>3. Old enough?<br>4. Cooldown passed?"}
-    D -- "Yes" --> E["Send Teams<br>Adaptive Card"]
-    D -- "No" --> F["Skip"]
+    C --> D{"For each ticket, check:"}
+    D -- "all pass" --> E["Send Teams<br>Adaptive Card"]
+    D -- "any fail" --> F["Skip"]
     E --> G["Update<br>cooldown file"]
 ```
+
+**Checks applied per ticket (in order):**
+
+1. Is the status in the product's active set?
+2. Does the product name match?
+3. Is the ticket old enough (≥ min_age_minutes)?
+4. Has the cooldown window passed since last notification?
 
 ## How the Search Query Works
 
