@@ -7,38 +7,32 @@ Fully registry-driven: products are configured in `src/scripts/product_registry.
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph EC2["EC2 Server"]
-        direction TB
-        subgraph docker_net["Docker Network (zoho-token-service_default)"]
-            direction LR
-            TS["Token Service<br>(FastAPI)<br>Port 8000<br>Auto-refreshes every ~58 min"]
-            NS["Notification Service<br>(Python 3.12)<br>main.py"]
-        end
+flowchart LR
+    subgraph Config["Configuration"]
+        ENV[".env file"]
+        REG["product_registry.py"]
+    end
+
+    subgraph EC2["EC2 Server — Docker Network"]
+        TS["Token Service<br>FastAPI :8000<br>auto-refresh ~58 min"]
+        NS["Notification Service<br>Python 3.12 main.py<br>polls every 30 sec"]
     end
 
     subgraph Zoho["Zoho Cloud"]
-        ZA["Zoho Accounts<br>OAuth Token Endpoint"]
-        ZD["Zoho Desk API<br>/api/v1/tickets/search"]
+        ZA["Zoho Accounts<br>OAuth endpoint"]
+        ZD["Zoho Desk API<br>tickets/search"]
     end
 
     subgraph Teams["Microsoft Teams"]
-        WH1["Product Webhooks<br>(11 channels)"]
-        WH2["Pending Summary<br>Webhook"]
+        WH["11 Product Webhooks<br>+ 1 Pending Webhook"]
     end
 
-    subgraph Config["Configuration"]
-        ENV[".env file<br>Zoho credentials<br>Product names<br>Webhook URLs<br>Timing controls"]
-        REG["product_registry.py<br>11 product definitions"]
-    end
-
-    TS -- "refresh_token grant" --> ZA
-    NS -- "GET /token" --> TS
-    NS -- "GET /tickets/search<br>?productName=...&status=..." --> ZD
-    NS -- "POST Adaptive Card" --> WH1
-    NS -- "POST Pending Summary" --> WH2
     ENV -. "loads" .-> NS
-    REG -. "builds ProductConfig" .-> NS
+    REG -. "builds config" .-> NS
+    TS -- "refresh_token" --> ZA
+    NS -- "GET /token" --> TS
+    NS -- "search by product + status" --> ZD
+    NS -- "POST Adaptive Cards" --> WH
 ```
 
 ## Polling Cycle (every 30 seconds)
@@ -58,12 +52,12 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph build["Query Construction"]
-        S["Statuses from all products<br>→ Assigned,Escalated,Pending"]
-        P["Product names from .env<br>→ Amendments,Code Stroke Alert,<br>Critical Finding,GENERAL,..."]
+        S["Statuses: Assigned, Escalated, Pending"]
+        P["Products: Super Stat, Code Stroke Alert,<br>Critical Finding, Amendments, NM Studies,<br>IT / Systems Issues, Reading Requests,<br>Password Reset, Unlock Account,<br>GENERAL, Consults & Physician Connection"]
     end
 
     subgraph call["Single API Call"]
-        Q["GET /api/v1/tickets/search<br>?status=Assigned,Escalated,Pending<br>&productName=Amendments,Code Stroke Alert,...<br>&sortBy=-createdTime<br>&limit=100"]
+        Q["GET /api/v1/tickets/search<br>status = Assigned,Escalated,Pending<br>productName = all 11 products<br>sortBy = -createdTime<br>limit = 100"]
     end
 
     subgraph filter["Local Filtering (per product worker)"]
