@@ -12,29 +12,29 @@ flowchart TB
         direction TB
         subgraph docker_net["Docker Network (zoho-token-service_default)"]
             direction LR
-            TS["Token Service\n(FastAPI)\nPort 8000\nAuto-refreshes every ~58 min"]
-            NS["Notification Service\n(Python 3.12)\nmain.py"]
+            TS["Token Service<br>(FastAPI)<br>Port 8000<br>Auto-refreshes every ~58 min"]
+            NS["Notification Service<br>(Python 3.12)<br>main.py"]
         end
     end
 
     subgraph Zoho["Zoho Cloud"]
-        ZA["Zoho Accounts\nOAuth Token Endpoint"]
-        ZD["Zoho Desk API\n/api/v1/tickets/search"]
+        ZA["Zoho Accounts<br>OAuth Token Endpoint"]
+        ZD["Zoho Desk API<br>/api/v1/tickets/search"]
     end
 
     subgraph Teams["Microsoft Teams"]
-        WH1["Product Webhooks\n(11 channels)"]
-        WH2["Pending Summary\nWebhook"]
+        WH1["Product Webhooks<br>(11 channels)"]
+        WH2["Pending Summary<br>Webhook"]
     end
 
     subgraph Config["Configuration"]
-        ENV[".env file\nZoho credentials\nProduct names\nWebhook URLs\nTiming controls"]
-        REG["product_registry.py\n11 product definitions"]
+        ENV[".env file<br>Zoho credentials<br>Product names<br>Webhook URLs<br>Timing controls"]
+        REG["product_registry.py<br>11 product definitions"]
     end
 
     TS -- "refresh_token grant" --> ZA
     NS -- "GET /token" --> TS
-    NS -- "GET /tickets/search\n?productName=...&status=..." --> ZD
+    NS -- "GET /tickets/search<br>?productName=...&status=..." --> ZD
     NS -- "POST Adaptive Card" --> WH1
     NS -- "POST Pending Summary" --> WH2
     ENV -. "loads" .-> NS
@@ -45,12 +45,12 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A["Fetch Token\nfrom Token Service"] --> B["Search Zoho\nAll products + statuses\nin one API call"]
-    B --> C["Fan Out\nto 11 product workers\n(thread pool)"]
-    C --> D{"For each ticket:\n1. Status active?\n2. Product match?\n3. Old enough?\n4. Cooldown passed?"}
-    D -- "Yes" --> E["Send Teams\nAdaptive Card"]
+    A["Fetch Token<br>from Token Service"] --> B["Search Zoho<br>All products + statuses<br>in one API call"]
+    B --> C["Fan Out<br>to 11 product workers<br>(thread pool)"]
+    C --> D{"For each ticket:<br>1. Status active?<br>2. Product match?<br>3. Old enough?<br>4. Cooldown passed?"}
+    D -- "Yes" --> E["Send Teams<br>Adaptive Card"]
     D -- "No" --> F["Skip"]
-    E --> G["Update\ncooldown file"]
+    E --> G["Update<br>cooldown file"]
 ```
 
 ## How the Search Query Works
@@ -58,12 +58,12 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph build["Query Construction"]
-        S["Statuses from all products\n→ Assigned,Escalated,Pending"]
-        P["Product names from .env\n→ Amendments,Code Stroke Alert,\nCritical Finding,GENERAL,..."]
+        S["Statuses from all products<br>→ Assigned,Escalated,Pending"]
+        P["Product names from .env<br>→ Amendments,Code Stroke Alert,<br>Critical Finding,GENERAL,..."]
     end
 
     subgraph call["Single API Call"]
-        Q["GET /api/v1/tickets/search\n?status=Assigned,Escalated,Pending\n&productName=Amendments,Code Stroke Alert,...\n&sortBy=-createdTime\n&limit=100"]
+        Q["GET /api/v1/tickets/search<br>?status=Assigned,Escalated,Pending<br>&productName=Amendments,Code Stroke Alert,...<br>&sortBy=-createdTime<br>&limit=100"]
     end
 
     subgraph filter["Local Filtering (per product worker)"]
@@ -88,10 +88,10 @@ flowchart LR
         T3["08:00 PM"]
     end
 
-    T1 & T2 & T3 --> W["±120 sec\nsend window"]
-    W --> S["Search Zoho\nstatus=PENDING\nall time"]
-    S --> C["Build summary card\nticket #, subject,\nassignee, age"]
-    C --> P["POST to\nPending Webhook"]
+    T1 & T2 & T3 --> W["±120 sec<br>send window"]
+    W --> S["Search Zoho<br>status=PENDING<br>all time"]
+    S --> C["Build summary card<br>ticket #, subject,<br>assignee, age"]
+    C --> P["POST to<br>Pending Webhook"]
 ```
 
 ## Current Product Registry
