@@ -79,7 +79,15 @@ PRODUCT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "name": "Password Reset",
         "teams_webhook_env_var": "TEAMS_WEBHOOK_PASSWORD_RESET",
         "last_sent_filename": "sent_password_reset_notifications.json",
-        "default_target_product_names": ["password reset"],
+        "default_target_product_names": ["Password Reset"],
+        "use_global_target_fallback": False,
+    },
+    "unlock_account": {
+        "prefix": "UNLOCK_ACCOUNT",
+        "name": "Unlock Account",
+        "teams_webhook_env_var": "TEAMS_WEBHOOK_PASSWORD_RESET",
+        "last_sent_filename": "sent_unlock_account_notifications.json",
+        "default_target_product_names": ["Unlock Account"],
         "use_global_target_fallback": False,
     },
     "general": {

@@ -97,7 +97,14 @@ PRODUCT_CASES = [
         product_id                  = "password_reset",
         prefix                      = "PASSWORD_RESET",
         use_global_target_fallback  = False,
-        default_target_products     = ["password reset"],
+        default_target_products     = ["Password Reset"],
+    ),
+    ProductCase(
+        case_id                     = "unlock_account",
+        product_id                  = "unlock_account",
+        prefix                      = "UNLOCK_ACCOUNT",
+        use_global_target_fallback  = False,
+        default_target_products     = ["Unlock Account"],
     ),
     ProductCase(
         case_id                     = "general",
