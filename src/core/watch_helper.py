@@ -3,11 +3,9 @@
 import os                                                 # Work with file paths and environment variables.
 import json                                               # Read and write small JSON files.
 import re                                                 # Run simple keyword matching with regular expressions.
-import time                                               # Sleep between polling loops.
 from dataclasses import dataclass                         # Define tiny config containers.
 from datetime import datetime, timedelta, timezone        # Handle time math safely.
 from typing import Any, Dict, List, Optional, Set, Tuple  # Provide friendly type hints.
-from concurrent.futures import ThreadPoolExecutor         # Send Teams posts in parallel.
 
 import pytz                     # Keep all local time handling consistent (Los Angeles by default).
 import requests                 # Talk to Zoho Desk and Microsoft Teams over HTTPS.
@@ -35,8 +33,6 @@ PAGE_LIMIT              = int(os.getenv("PAGE_LIMIT", "50"))                    
 PAGE_SIZE               = int(os.getenv("PAGE_SIZE", "100"))                                                # Page size for Zoho search calls.
 NOTIFY_COOLDOWN_RAW     = os.getenv("NOTIFY_COOLDOWN_SECONDS", "").strip()                                  # Optional global cooldown override in seconds.
 NOTIFY_COOLDOWN_SECONDS = int(NOTIFY_COOLDOWN_RAW) if NOTIFY_COOLDOWN_RAW else None                        # None means derive cooldown from each product's min-age setting.
-NOTIFY_WORKERS_RAW      = os.getenv("NOTIFY_WORKERS", "").strip()                                           # Raw env value for notify worker count (may be blank).
-NOTIFY_WORKERS          = int(NOTIFY_WORKERS_RAW) if NOTIFY_WORKERS_RAW else None                           # Worker count for Teams posts; None lets Python choose.
 ZOHO_DESK_BASE          = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")                  # Base URL for Zoho Desk.
 ZOHO_ACCOUNTS_TOKEN_URL = os.getenv("ZOHO_ACCOUNTS_TOKEN_URL", "https://accounts.zoho.com/oauth/v2/token")  # Token endpoint.
 
@@ -308,71 +304,39 @@ def contains_magic_phrase(*texts: Any) -> bool:                            # Loo
     return False                                                           # No matches found.
 
 # -----------------------------
-# Ticket filtering helpers
+# Ticket helpers
 # -----------------------------
 
-def is_unresolved(ticket: Dict[str, Any]) -> bool:                  # Check if ticket is still open.
-    """True when ticket is not resolved or closed."""               # Small docstring.
-    status      = (ticket.get("status") or "").strip()              # Read status safely.
-    status_type = (ticket.get("statusType") or "").strip().lower()  # Read statusType safely.
-    if status.lower() == "resolved":                                # If resolved exactly...
-        return False                                                # Treat as done.
-    if status_type == "closed":                                     # If statusType says closed...
-        return False                                                # Treat as done.
-    return True                                                     # Otherwise still open.
+def extract_product_name(ticket: Dict[str, Any]) -> Optional[str]:                           # Pull the product name from a ticket payload.
+    """Extract product name from ticket, checking common Zoho field shapes."""               # Docstring in plain words.
+    for key in ("productName", "product"):                                                   # Check common product keys.
+        value = ticket.get(key)                                                              # Read the value.
+        if isinstance(value, str) and value.strip():                                         # If it is a non-empty string...
+            return value.strip()                                                             # Return it directly.
+        elif isinstance(value, dict):                                                        # If value is a nested dict...
+            for sub_key in ("name", "productName"):                                          # Check nested name fields.
+                nested = value.get(sub_key)                                                  # Read nested value.
+                if isinstance(nested, str) and nested.strip():                               # If usable string...
+                    return nested.strip()                                                    # Return the nested name.
+    return None                                                                              # No product name found.
 
 
-def product_matches(ticket: Dict[str, Any], target_products: List[str]) -> bool:  # Compare ticket product names to target list.
-    """Check ticket product fields against target list (case-insensitive)."""  # Docstring.
-    if not target_products:                                                    # If no target list supplied...
-        return False                                                              # No match possible.
-    candidates: List[str] = []              # Collect possible product names.
-    for key in ("productName", "product"):  # Check common keys.
-        value = ticket.get(key)                       # Read the value.
-        if isinstance(value, str) and value.strip():  # If it's a non-empty string...
-            candidates.append(value.strip())                                      # Save it.
-        elif isinstance(value, dict):                                             # If value is nested dict...
-            for sub_key in ("name", "productName"):                               # Check nested name fields.
-                nested = value.get(sub_key)                     # Read nested value.
-                if isinstance(nested, str) and nested.strip():  # If usable string...
-                    candidates.append(nested.strip())                             # Save it.
-    target_lower = {t.lower() for t in target_products}                             # Build lower-case set once for fast lookup.
-    for name in candidates:                                                       # Walk through collected names.
-        if name.lower() in target_lower:                                          # Case-insensitive comparison.
-            return True                                                           # Found a match.
-    return False                                                                  # No matches.
+def build_config_lookup(configs: List[ProductConfig]) -> Dict[str, ProductConfig]:           # Build product-name-to-config lookup dict.
+    """Map each target product name (lower-case) to its ProductConfig."""                    # Docstring in plain words.
+    lookup: Dict[str, ProductConfig] = {}                                                    # Empty lookup dict to populate.
+    for config in configs:                                                                   # Walk every product config.
+        for name in config.target_product_names:                                             # Walk every target name for this product.
+            lookup[name.lower()] = config                                                    # Map lower-case name to its config.
+    return lookup                                                                            # Return the completed lookup dict.
 
 
-def older_than_min_age(ticket: Dict[str, Any], min_age_minutes: int) -> Tuple[bool, str]:  # Determine if ticket is old enough.
-    """Return (ok, reason) telling if ticket age exceeds minimum."""  # Docstring in plain terms.
-    raw_created = ticket.get("createdTime") or ""                     # Read createdTime string.
-    if not raw_created:                                               # If missing...
-        return False, "missing createdTime"                                                # Explain failure.
-    created_la = parse_zoho_time_assume_la(raw_created)  # Parse into LA time.
-    age        = now_la() - created_la                   # Compute how long ago.
-    if age < timedelta(minutes=min_age_minutes):         # If too new...
-        minutes_old = max(0, int(age.total_seconds() // 60))  # Floor to minutes.
-        return False, f"too new ({minutes_old}m old)"         # Explain skip.
-    return True, f"age ok ({int(age.total_seconds() // 60)}m old)"                         # Age is fine.
-
-
-def effective_notify_cooldown_seconds(config: ProductConfig) -> int:  # Compute cooldown seconds used for repeat alerts.
-    """Return cooldown seconds with clear precedence and safe defaults."""  # Brief docstring.
-    if config.notify_cooldown_seconds is not None:                          # Product-specific override wins first.
-        return max(0, int(config.notify_cooldown_seconds))                  # Clamp to non-negative seconds.
-    if NOTIFY_COOLDOWN_SECONDS is not None:                                 # Fall back to global env override when provided.
-        return max(0, int(NOTIFY_COOLDOWN_SECONDS))                         # Clamp to non-negative seconds.
-    return max(0, int(config.min_age_minutes) * 60)                         # Default to product min-age minutes.
-
-
-def should_alert(ticket: Dict[str, Any], target_products: List[str], min_age_minutes: int) -> Tuple[bool, str]:  # Decide if a ticket needs an alert.
-    """Decide if ticket deserves an alert using product-name matching only."""  # Docstring.
-    if not is_unresolved(ticket):                                                   # If ticket already resolved...
-        return False, "resolved/closed"                                             # Explain no.
-    if not product_matches(ticket, target_products):                                # Product match is now mandatory.
-        return False, "no product match"                                            # Explain mismatch.
-    ok, reason = older_than_min_age(ticket, min_age_minutes)                        # Check age when product matches.
-    return ok, f"product match; {reason}"                                            # Return age result.
+def effective_notify_cooldown_seconds(config: ProductConfig) -> int:                         # Compute cooldown seconds used for repeat alerts.
+    """Return cooldown seconds with clear precedence and safe defaults."""                   # Brief docstring.
+    if config.notify_cooldown_seconds is not None:                                           # Product-specific override wins first.
+        return max(0, int(config.notify_cooldown_seconds))                                   # Clamp to non-negative seconds.
+    if NOTIFY_COOLDOWN_SECONDS is not None:                                                  # Fall back to global env override when provided.
+        return max(0, int(NOTIFY_COOLDOWN_SECONDS))                                          # Clamp to non-negative seconds.
+    return max(0, int(config.min_age_minutes) * 60)                                          # Default to product min-age minutes.
 
 # -----------------------------
 # Zoho search
@@ -426,113 +390,103 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None,
     return results                                                              # Hand back all collected tickets.
 
 # -----------------------------
-# One cycle runner per product
+# Single-loop ticket processor
 # -----------------------------
 
-def run_single_product_cycle(                                                                                 # Run all steps for one product in a single cycle.
+def process_tickets(                                                                                          # Process all tickets in one pass using a config lookup.
     *,                                                                                                        # Force keyword arguments for clarity.
-    config:              ProductConfig,                                                                       # Product-specific settings.
-    token:               str,                                                                                 # Shared Zoho access token.
-    last_sent:           Dict[str, datetime],                                                                 # Cooldown memory map.
-    pre_fetched_tickets: List[Dict[str, Any]] = None,                                                         # Optional shared tickets list to avoid extra fetch.
-) -> Tuple[int, bool]:                                                                                        # Return count of hits and whether state changed.
-    """Process one polling cycle for a product; return (hits, changed_flag)."""                               # Clear docstring.
-    hits             = 0                                                                                      # Count how many alerts we send.
-    sent_changed     = False                                                                                  # Track whether we update cooldown file.
-    cooldown_seconds = effective_notify_cooldown_seconds(config)                                              # Resolve cooldown seconds once per cycle.
-    tickets          = pre_fetched_tickets if pre_fetched_tickets is not None else search_tickets(token, statuses=sorted(config.active_statuses), product_names=config.target_product_names)  # Use shared tickets or fetch our own.
-    if pre_fetched_tickets is None:                                                                           # Only log fetch count when this product performed the fetch.
-        print(f"[{config.name}] Fetched {len(tickets)} ticket(s) from search endpoint.")                      # Log count for this product.
-    
-    with ThreadPoolExecutor(max_workers=NOTIFY_WORKERS) as executor:                                          # Spin up thread pool for webhook posts.
-        
-        for ticket in tickets:                                                                                # Handle each ticket row.
-            ticket_id = ticket.get("id")                                                                      # Pull ticket id.
-            if not ticket_id:                                                                                 # If missing id...
-                continue                                                                                      # Skip this ticket.
-            status = (ticket.get("status") or "").strip()                                                     # Read status text.
-            if status and status not in config.active_statuses:                                               # If status not watched...
-                continue                                                                                      # Skip.
-            created_raw = ticket.get("createdTime", "")                                                       # Raw created timestamp.
-            try:                                                                                              # Try to parse created time.
-                created_la      = parse_zoho_time_assume_la(created_raw)                                      # Parse into LA time.
-                age_minutes     = int((now_la() - created_la).total_seconds() // 60)                          # Age in minutes.
-                created_display = created_la.strftime("%Y-%m-%d %H:%M:%S %Z")                                 # Nice display string.
-            except Exception:                                                                                 # If parsing fails...
-                created_la      = None                                                                        # Mark as unknown time.
-                age_minutes     = -1                                                                          # Unknown age marker.
-                created_display = created_raw or "(unknown)"                                                  # Fallback display.
-            should, reason = should_alert(ticket, config.target_product_names, config.min_age_minutes)  # Decide alert.
-            if not should:                                                                                    # If no alert...
-                continue                                                                                      # Skip to next ticket.
+    tickets:        List[Dict[str, Any]],                                                                     # Pre-fetched ticket list from Zoho search.
+    config_lookup:  Dict[str, ProductConfig],                                                                 # Product-name-to-config lookup built by build_config_lookup.
+    cooldown_state: Dict[str, Dict[str, datetime]],                                                           # Per-product cooldown maps keyed by last_sent_filename.
+) -> int:                                                                                                     # Return total number of alerts sent.
+    """Walk every ticket once, look up its product config, check age and cooldown, send to Teams."""          # Docstring in plain words.
+    script_dir  = os.path.dirname(os.path.abspath(__file__))                                                  # Folder that holds cooldown JSON files.
+    total_sent  = 0                                                                                           # Count alerts across all products.
+    changed_set: Set[str] = set()                                                                             # Track which cooldown files need saving.
 
-            now_local = datetime.now()                                                                        # Current local time for cooldown.
-            last_time = last_sent.get(ticket_id)                                                              # Previous send time.
-            if last_time:                                                                                     # If we sent before...
-                elapsed = (now_local - last_time).total_seconds()                                             # Seconds since last send.
-                if cooldown_seconds > 0 and elapsed < cooldown_seconds:                                       # If still in cooldown...
-                    wait_minutes = (cooldown_seconds - elapsed) / 60.0                                        # Minutes remaining.
-                    print(f"[{config.name}] Skip ticket {ticket_id} - cooldown {wait_minutes:.1f} minutes left.")  # Log skip.
-                    continue                                                                                  # Move on.
-            
-            ticket_number    = str(ticket.get("ticketNumber", "") or "")                                      # For logs and card.
-            subject_line     = ticket.get("subject", "") or ""                                                # Read subject.
-            description_text = ticket.get("description") or ticket.get("descriptionText") or ""               # Read description text.
-            web_url          = ticket.get("webUrl", "") or ""                                                 # Read web URL for button.
-            print(f"[{config.name}] ALERT: Ticket {ticket_number} ({ticket_id}) reason={reason}")             # Log alert intent.
-            
-            teams_payload = build_teams_adaptive_card(                                                        # Build Teams payload once.
-                title           = f"{config.name.upper()} REMINDER (Automated)",                              # Title with product name.
-                summary         = f"Ticket {ticket_number} is still NOT resolved.",                           # Short summary.
-                banner_text     = config.card_banner_text,                                                    # Optional top banner (used by selected products only).
-                ticket_number   = ticket_number,                                                              # Ticket number.
-                ticket_id       = str(ticket_id),                                                             # Ticket id.
-                subject_line    = subject_line,                                                               # Subject line.
-                status          = str(ticket.get("status", "") or ""),                                        # Status text.
-                status_type     = str(ticket.get("statusType", "") or ""),                                    # Status type text.
-                created_display = created_display,                                                            # Created display text.
-                age_minutes     = age_minutes,                                                                # Age minutes.
-                reason          = reason,                                                                     # Match reason.
-                web_url         = web_url,                                                                    # Ticket link.
-            )                                                                                                             # Finish payload build.
-            
-            magic_hit      = contains_magic_phrase(subject_line, description_text, ticket.get("subject"), ticket.get("description"))  # Check magic phrase.
-            target_webhook = MAGIC_TEST_WEBHOOK if magic_hit else os.getenv(config.teams_webhook_env_var, "").strip()     # Pick webhook URL.
-            if not target_webhook:                                                                                        # If no webhook configured...
-                print(f"[{config.name}] Skip Teams for ticket {ticket_number} ({ticket_id}) - no webhook configured.")    # Log skip.
-                continue                                                                                                  # Skip sending.
-            
-            future = executor.submit(post_to_teams, target_webhook, teams_payload)                             # Queue webhook send.
-            future.result()                                                                                    # Wait for send to finish (will raise on error).
-            last_sent[ticket_id] = now_local                                                                   # Record send time for cooldowns.
-            sent_changed         = True                                                                        # Flag that we need to persist.
-            hits                += 1                                                                           # Increment sent count.
-    return hits, sent_changed                                                                                  # Return how many alerts sent and if state changed.
+    for ticket in tickets:                                                                                    # One pass through every ticket.
+        ticket_id = ticket.get("id")                                                                          # Pull ticket id.
+        if not ticket_id:                                                                                     # If missing id...
+            continue                                                                                          # Skip this ticket.
 
-# -----------------------------
-# Convenience runner that handles state files
-# -----------------------------
+        product_name = extract_product_name(ticket)                                                           # Pull product name from ticket payload.
+        if not product_name:                                                                                  # If no product name found...
+            continue                                                                                          # Skip — cannot match any config.
+        config = config_lookup.get(product_name.lower())                                                      # Look up the matching product config.
+        if not config:                                                                                        # If no config owns this product name...
+            continue                                                                                          # Skip — not one of our watched products.
 
-def run_product_loop_once(config: ProductConfig, token: str, pre_fetched_tickets: List[Dict[str, Any]] = None) -> None:  # Wrapper that loads/saves cooldown file per cycle.
-    """Run one product cycle with state load/save and friendly logs."""                                       # Docstring.
-    script_dir     = os.path.dirname(os.path.abspath(__file__))                                               # Current folder path.
-    last_sent_path = os.path.join(script_dir, config.last_sent_filename)                                      # Path to cooldown file.
-    if not os.path.exists(last_sent_path):                                                                    # If file absent...
-        print(f"[{config.name}] No existing cooldown file found; starting fresh.")                            # Log info.
-    last_sent      = load_last_sent(last_sent_path)                                                           # Load cooldown data.
-    hits, changed  = run_single_product_cycle(                                                                # Run one cycle of work.
-        config              = config,                                                                         # Pass the product settings.
-        token               = token,                                                                          # Pass the shared Zoho token.
-        last_sent           = last_sent,                                                                      # Pass cooldown memory.
-        pre_fetched_tickets = pre_fetched_tickets,                                                            # Pass shared tickets if present.
-    )                                                                                                         # End cycle call.
-    if changed:                                                                                               # If cooldown map changed...
-        save_last_sent(last_sent_path, last_sent)                                                             # Persist updates.
-        print(f"[{config.name}] Saved cooldown file with {len(last_sent)} entries to {last_sent_path}")       # Log save.
-    if hits == 0:                                                                                             # If nothing sent...
-        print(f"[{config.name}] No matching unresolved tickets found this cycle.")                            # Log quiet cycle.
+        status = (ticket.get("status") or "").strip()                                                         # Read status text.
+        if status and status not in config.active_statuses:                                                   # If status not in this product's watched set...
+            continue                                                                                          # Skip.
+
+        created_raw = ticket.get("createdTime", "")                                                           # Raw created timestamp.
+        try:                                                                                                  # Try to parse created time.
+            created_la      = parse_zoho_time_assume_la(created_raw)                                          # Parse into LA time.
+            age_minutes     = int((now_la() - created_la).total_seconds() // 60)                              # Age in minutes.
+            created_display = created_la.strftime("%Y-%m-%d %H:%M:%S %Z")                                    # Nice display string.
+        except Exception:                                                                                     # If parsing fails...
+            created_la      = None                                                                            # Mark as unknown time.
+            age_minutes     = -1                                                                              # Unknown age marker.
+            created_display = created_raw or "(unknown)"                                                      # Fallback display.
+
+        if age_minutes >= 0 and age_minutes < config.min_age_minutes:                                         # If ticket is too new for this product...
+            continue                                                                                          # Skip — not old enough to alert.
+
+        last_sent        = cooldown_state.setdefault(config.last_sent_filename, {})                            # Get or create this product's cooldown map.
+        cooldown_seconds = effective_notify_cooldown_seconds(config)                                           # Resolve cooldown seconds for this product.
+        now_local        = datetime.now()                                                                     # Current local time for cooldown math.
+        last_time        = last_sent.get(ticket_id)                                                           # Previous send time for this ticket.
+        if last_time:                                                                                         # If we sent before...
+            elapsed = (now_local - last_time).total_seconds()                                                 # Seconds since last send.
+            if cooldown_seconds > 0 and elapsed < cooldown_seconds:                                           # If still in cooldown...
+                wait_minutes = (cooldown_seconds - elapsed) / 60.0                                            # Minutes remaining.
+                print(f"[{config.name}] Skip ticket {ticket_id} - cooldown {wait_minutes:.1f} min left.")     # Log skip.
+                continue                                                                                      # Move on.
+
+        ticket_number    = str(ticket.get("ticketNumber", "") or "")                                          # For logs and card.
+        subject_line     = ticket.get("subject", "") or ""                                                    # Read subject.
+        description_text = ticket.get("description") or ticket.get("descriptionText") or ""                   # Read description text.
+        web_url          = ticket.get("webUrl", "") or ""                                                     # Read web URL for button.
+        reason           = f"age ok ({age_minutes}m old)" if age_minutes >= 0 else "age unknown"              # Build reason text.
+        print(f"[{config.name}] ALERT: Ticket {ticket_number} ({ticket_id}) reason={reason}")                 # Log alert intent.
+
+        teams_payload = build_teams_adaptive_card(                                                            # Build Teams payload.
+            title           = f"{config.name.upper()} REMINDER (Automated)",                                  # Title with product name.
+            summary         = f"Ticket {ticket_number} is still NOT resolved.",                               # Short summary.
+            banner_text     = config.card_banner_text,                                                        # Optional top banner.
+            ticket_number   = ticket_number,                                                                  # Ticket number.
+            ticket_id       = str(ticket_id),                                                                 # Ticket id.
+            subject_line    = subject_line,                                                                   # Subject line.
+            status          = str(ticket.get("status", "") or ""),                                            # Status text.
+            status_type     = str(ticket.get("statusType", "") or ""),                                        # Status type text.
+            created_display = created_display,                                                                # Created display text.
+            age_minutes     = age_minutes,                                                                    # Age minutes.
+            reason          = reason,                                                                         # Match reason.
+            web_url         = web_url,                                                                        # Ticket link.
+        )                                                                                                     # Finish payload build.
+
+        magic_hit      = contains_magic_phrase(subject_line, description_text)                                 # Check magic phrase.
+        target_webhook = MAGIC_TEST_WEBHOOK if magic_hit else os.getenv(config.teams_webhook_env_var, "").strip()  # Pick webhook URL.
+        if not target_webhook:                                                                                # If no webhook configured...
+            print(f"[{config.name}] Skip ticket {ticket_number} ({ticket_id}) - no webhook configured.")      # Log skip.
+            continue                                                                                          # Skip sending.
+
+        post_to_teams(target_webhook, teams_payload)                                                          # Send card to Teams sequentially.
+        last_sent[ticket_id] = now_local                                                                      # Record send time for cooldowns.
+        changed_set.add(config.last_sent_filename)                                                            # Mark this product's cooldown file as dirty.
+        total_sent += 1                                                                                       # Increment total alert count.
+
+    for filename in changed_set:                                                                              # Save only the cooldown files that changed.
+        path = os.path.join(script_dir, filename)                                                             # Build full path to cooldown file.
+        save_last_sent(path, cooldown_state[filename])                                                        # Persist updates to disk.
+        print(f"[cooldown] Saved {filename}")                                                                 # Log save.
+
+    if total_sent == 0:                                                                                       # If nothing sent this cycle...
+        print("[main] No matching tickets found this cycle.")                                                  # Log quiet cycle.
     else:                                                                                                     # If we sent something...
-        print(f"[{config.name}] Sent {hits} reminder notification(s) to Teams.")                              # Log count.
+        print(f"[main] Sent {total_sent} reminder notification(s) to Teams.")                                 # Log total count.
+    return total_sent                                                                                         # Hand back the total.
 
 # -----------------------------
 # Pending summary helpers
