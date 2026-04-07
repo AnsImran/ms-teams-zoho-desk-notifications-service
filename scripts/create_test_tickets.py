@@ -41,15 +41,21 @@ def discover_product_id(token: str, product_name: str) -> str | None:           
     return None                                                                                           # No ticket found for this product name.
 
 
+DEPARTMENT_ID = "1166045000000006907"                                                                    # Webzter Support department (required by Zoho create API).
+CONTACT_ID    = "1166045000005076012"                                                                    # Shared test contact (required by Zoho create API).
+
+
 def create_ticket(token: str, product_id: str) -> dict:                                                  # Create one test ticket with a specific product.
     """Create one test ticket with the given product ID; returns the API response dict."""                # Docstring in plain words.
     url     = f"{ZOHO_DESK_BASE}/api/v1/tickets"                                                         # Build ticket creation URL.
     headers = desk_headers(token)                                                                        # Start with standard Zoho headers.
     headers["Content-Type"] = "application/json"                                                         # Tell Zoho we are sending JSON.
     payload = {                                                                                          # Build the ticket payload.
-        "subject":     SUBJECT,                                                                          # Ticket subject line.
-        "description": DESCRIPTION,                                                                      # Ticket description body.
-        "productId":   product_id,                                                                       # Link ticket to the correct product.
+        "subject":      SUBJECT,                                                                         # Ticket subject line.
+        "description":  DESCRIPTION,                                                                     # Ticket description body.
+        "productId":    product_id,                                                                      # Link ticket to the correct product.
+        "departmentId": DEPARTMENT_ID,                                                                   # Required department field.
+        "contactId":    CONTACT_ID,                                                                      # Required contact field.
     }                                                                                                    # End of payload.
     response = requests.post(url, headers=headers, json=payload, timeout=30)                             # POST to create the ticket.
     response.raise_for_status()                                                                          # Fail loudly on HTTP error.
