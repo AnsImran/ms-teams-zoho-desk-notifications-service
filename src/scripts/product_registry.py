@@ -4,7 +4,7 @@ import os                                        # Read product-specific env ove
 from typing import Any, Dict, List, Optional     # Keep type hints explicit and readable.
 
 from src.core.watch_helper import (              # Reuse shared watch-helper contracts and defaults.
-    ProductConfig,                               # Shared config object consumed by run_product_loop_once.
+    ProductConfig,                               # Shared config object consumed by process_tickets.
     MAX_AGE_HOURS_DEFAULT,                       # Shared default lookback.
     MIN_AGE_MINUTES_DEFAULT,                     # Shared default minimum age before alerting.
 )                                                # End helper imports.

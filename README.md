@@ -37,44 +37,41 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A["Fetch Token<br>from Token Service"] --> B["Search Zoho<br>all products + statuses<br>in one API call"]
-    B --> C["Fan Out<br>to 11 product workers<br>(thread pool)"]
-    C --> D{"For each ticket, check:"}
+    A["Fetch token<br>from Token Service"] --> B["Search Zoho<br>all products + statuses<br>in one API call"]
+    B --> C["Single loop:<br>look up each ticket's<br>product config via dict"]
+    C --> D{"Check:<br>status active?<br>old enough?<br>cooldown passed?"}
     D -- "all pass" --> E["Send Teams<br>Adaptive Card"]
     D -- "any fail" --> F["Skip"]
-    E --> G["Update<br>cooldown file"]
+    E --> G["Record cooldown"]
 ```
 
 **Checks applied per ticket (in order):**
 
-1. Is the status in the product's active set?
-2. Does the product name match?
-3. Is the ticket old enough (≥ min_age_minutes)?
+1. Does the ticket have a product name that maps to a configured product?
+2. Is the status in that product's active set?
+3. Is the ticket old enough (age ≥ min_age_minutes)?
 4. Has the cooldown window passed since last notification?
 
 ## How the Search Query Works
 
 ```mermaid
 flowchart TB
-    subgraph build["Query Construction"]
+    subgraph build["Query Construction (from .env + registry)"]
         S["Statuses: Assigned, Escalated, Pending"]
         P["Products: Super Stat, Code Stroke Alert,<br>Critical Finding, Amendments, NM Studies,<br>IT / Systems Issues, Reading Requests,<br>Password Reset, Unlock Account,<br>GENERAL, Consults & Physician Connection"]
     end
 
-    subgraph call["Single API Call"]
-        Q["GET /api/v1/tickets/search<br>status = Assigned,Escalated,Pending<br>productName = all 11 products<br>sortBy = -createdTime<br>limit = 100"]
+    subgraph call["Single API Call — no time window, all history"]
+        Q["GET /api/v1/tickets/search<br>status = Assigned,Escalated,Pending<br>productName = all 11 products<br>sortBy = -createdTime<br>limit = 100 (paginated)"]
     end
 
-    subgraph filter["Local Filtering (per product worker)"]
-        F1["Product name match?"]
-        F2["Age ≥ min_age_minutes?"]
-        F3["Cooldown expired?"]
-        F4["Magic test phrase?"]
+    subgraph process["Single-Loop Processing"]
+        L["For each ticket:<br>extract product name<br>→ look up config in dict<br>→ check age + cooldown<br>→ send or skip"]
     end
 
     S --> Q
     P --> Q
-    Q --> F1 --> F2 --> F3 --> F4
+    Q --> L
 ```
 
 ## Pending Summary Schedule
@@ -113,40 +110,44 @@ Password Reset and Unlock Account are separate products that share the same Team
 
 Source of truth: `src/scripts/product_registry.py`.
 
-## Matching Logic
+## How Ticket Processing Works
 
-- Product names are sent directly in the Zoho API query (`productName` parameter) for server-side filtering.
-- Local matching is case-insensitive exact match against configured target product names.
-- A ticket qualifies for alert when **all** conditions are met:
-  1. Status is in the product's active statuses set
-  2. Product name matches (case-insensitive)
-  3. Ticket age ≥ `min_age_minutes`
-  4. Cooldown window has passed since last notification for this ticket
-- Cooldown precedence:
-  1. `<PREFIX>_NOTIFY_COOLDOWN_SECONDS`
-  2. Global `NOTIFY_COOLDOWN_SECONDS`
-  3. Fallback: `<PREFIX>_MIN_AGE_MINUTES × 60`
+The service uses a **single-loop architecture** — no per-product threads or workers.
+
+1. One API call fetches all tickets matching any configured product name + status.
+2. Zoho returns timestamps in UTC (`createdTime: "2026-02-19T04:51:42.000Z"`).
+3. A `dict` maps each product name (lower-case) to its `ProductConfig`.
+4. Each ticket is processed once: extract product name → look up config → check age + cooldown → send or skip.
+5. Cooldown state is held in memory (per product) and persisted to JSON files only when alerts are sent.
+
+**Cooldown precedence:**
+
+1. `<PREFIX>_NOTIFY_COOLDOWN_SECONDS` (product-specific)
+2. `NOTIFY_COOLDOWN_SECONDS` (global override)
+3. `<PREFIX>_MIN_AGE_MINUTES × 60` (fallback)
 
 ## Repository Layout
 
 ```text
 .
-├── main.py                          # Entry point — infinite polling loop
+├── main.py                          # Entry point — single-loop polling
 ├── Dockerfile.notification          # Container image for the notification service
 ├── docker-compose.yml               # Orchestration (joins token service network)
 ├── src/
 │   ├── core/
-│   │   └── watch_helper.py          # Shared logic (~700 lines): token, search, cards, filtering
+│   │   └── watch_helper.py          # Core logic: token, search, process_tickets, cards
 │   ├── schema/
 │   │   └── zoho_api_schemas.py      # Pydantic models for Zoho API validation
 │   └── scripts/
 │       ├── product_registry.py      # Declarative config for all 11 products
 │       └── pending_watch.py         # Pending summary scheduler
 ├── scripts/
-│   └── create_test_tickets.py       # Creates one test ticket per product (end-to-end testing)
+│   ├── create_test_tickets.py       # Creates one test ticket per product (end-to-end testing)
+│   └── render_diagrams.py           # Renders Mermaid diagrams from README to PNG
 ├── tests/
 │   ├── core/                        # Unit tests for watch_helper logic
 │   └── scripts/                     # Parameterized tests for product registry
+├── docs/diagrams/                   # Rendered PNG diagrams
 ├── credentials/                     # SSH keys and server connection info (git-ignored)
 └── .github/workflows/
     └── ci.yml                       # CI (test on push) + CD (deploy on main)
@@ -198,11 +199,11 @@ Workflow: `.github/workflows/ci.yml`
 | Variable | Default | Purpose |
 |---|---|---|
 | `CHECK_EVERY_SECONDS` | `30` | Polling interval |
-| `TZ_NAME` | `America/Los_Angeles` | Timezone for all time calculations |
+| `TZ_NAME` | `America/Los_Angeles` | Timezone for display and pending schedule |
 | `MIN_AGE_MINUTES` | `5` | Global default minimum ticket age before alerting |
 | `NOTIFY_COOLDOWN_SECONDS` | — | Optional global cooldown override |
 | `PAGE_SIZE` | `100` | Zoho search page size |
-| `PAGE_LIMIT` | `50` | Max pages to fetch |
+| `PAGE_LIMIT` | `50` | Max pages to fetch (safety cap) |
 | `ZOHO_DESK_ORG_ID` | — | **Required**: Zoho organization ID |
 | `ZOHO_DESK_BASE` | `https://desk.zoho.com` | Zoho Desk API base URL |
 
@@ -229,6 +230,7 @@ uv sync                                          # Install dependencies
 uv run python main.py                            # Run the full service
 uv run python src/scripts/pending_watch.py       # Run pending summary once
 uv run --with pytest pytest -q                   # Run all tests
+uv run python scripts/render_diagrams.py         # Re-render diagram PNGs
 ```
 
 ## How to Add a New Product

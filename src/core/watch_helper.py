@@ -4,7 +4,7 @@ import os                                                 # Work with file paths
 import json                                               # Read and write small JSON files.
 import re                                                 # Run simple keyword matching with regular expressions.
 from dataclasses import dataclass                         # Define tiny config containers.
-from datetime import datetime, timedelta, timezone        # Handle time math safely.
+from datetime import datetime, timedelta                   # Handle time math safely.
 from typing import Any, Dict, List, Optional, Set, Tuple  # Provide friendly type hints.
 
 import pytz                     # Keep all local time handling consistent (Los Angeles by default).
@@ -34,7 +34,6 @@ PAGE_SIZE               = int(os.getenv("PAGE_SIZE", "100"))                    
 NOTIFY_COOLDOWN_RAW     = os.getenv("NOTIFY_COOLDOWN_SECONDS", "").strip()                                  # Optional global cooldown override in seconds.
 NOTIFY_COOLDOWN_SECONDS = int(NOTIFY_COOLDOWN_RAW) if NOTIFY_COOLDOWN_RAW else None                        # None means derive cooldown from each product's min-age setting.
 ZOHO_DESK_BASE          = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip("/")                  # Base URL for Zoho Desk.
-ZOHO_ACCOUNTS_TOKEN_URL = os.getenv("ZOHO_ACCOUNTS_TOKEN_URL", "https://accounts.zoho.com/oauth/v2/token")  # Token endpoint.
 
 MAGIC_TEST_WEBHOOK = "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM"  # Shared test webhook for magic phrase.
 MAGIC_TRIGGER      = os.getenv("MAGIC_TEST_TRIGGER_PHRASE", "test ticket by magic ai").strip().lower()      # Magic phrase text.

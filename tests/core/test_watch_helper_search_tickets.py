@@ -15,7 +15,6 @@ REPO_ROOT            = Path(__file__).resolve().parents[2]                      
 PAYLOAD_FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "zoho_tickets_search_raw_payload.txt"
                                                                                          # Fixture holding the captured Zoho "RAW RESPONSE TEXT" payload.
 
-# is class main sara mock data para hua hay
 class StubResponse:
     """Tiny requests-like response stub used by monkeypatched requests.get."""  # Keep monkeypatch setup simple.
 
