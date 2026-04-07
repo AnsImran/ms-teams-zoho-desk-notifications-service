@@ -56,7 +56,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    subgraph build["Query Construction (from .env + registry)"]
+    subgraph build["Query Construction"]
         S["Statuses: Assigned, Escalated, Pending"]
         P["Products: Super Stat, Code Stroke Alert,<br>Critical Finding, Amendments, NM Studies,<br>IT / Systems Issues, Reading Requests,<br>Password Reset, Unlock Account,<br>GENERAL, Consults & Physician Connection"]
     end
