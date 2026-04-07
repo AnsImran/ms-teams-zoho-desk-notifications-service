@@ -12,8 +12,6 @@ RUN pip install --no-cache-dir \
 
 ENV PYTHONUNBUFFERED=1
 
-COPY pyproject.toml .
-COPY main.py .
-COPY src/ ./src/
+COPY . .
 
 CMD ["python", "main.py"]
