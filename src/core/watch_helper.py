@@ -1,11 +1,11 @@
 """Shared helpers for product-specific Zoho Desk watchers (layperson style)."""  # Short module description in plain words.
 
-import os                                                 # Work with file paths and environment variables.
-import json                                               # Read and write small JSON files.
-import re                                                 # Run simple keyword matching with regular expressions.
-from dataclasses import dataclass                         # Define tiny config containers.
+import os                                                  # Work with file paths and environment variables.
+import json                                                # Read and write small JSON files.
+import re                                                  # Run simple keyword matching with regular expressions.
+from dataclasses import dataclass                          # Define tiny config containers.
 from datetime import datetime, timedelta                   # Handle time math safely.
-from typing import Any, Dict, List, Optional, Set, Tuple  # Provide friendly type hints.
+from typing import Any, Dict, List, Optional, Set, Tuple   # Provide friendly type hints.
 
 import pytz                     # Keep all local time handling consistent (Los Angeles by default).
 import requests                 # Talk to Zoho Desk and Microsoft Teams over HTTPS.
@@ -199,9 +199,7 @@ def build_teams_adaptive_card(  # Build and wrap an adaptive card payload.
     web_url:         str,       # Link to open the ticket.
 ) -> Dict[str, Any]:                                                           # Return a dictionary payload ready for Teams.
     """Build the Adaptive Card body wrapped in the Teams message envelope."""  # Short docstring.
-    body_blocks: List[Dict[str, Any]] = [                                       # Build card rows in order; dev label always appears first.
-        {"type": "TextBlock", "text": "Sent from dev script", "wrap": True, "size": "Small", "color": "Accent", "spacing": "None"},  # Dev origin label at the very top.
-    ]
+    body_blocks: List[Dict[str, Any]] = []                                       # Build card rows in order so optional banner can appear first.
     if banner_text.strip():                                                    # Add a visual instruction banner when provided.
         body_blocks.append(                                                    # Banner appears at very top of the card.
             {
@@ -254,8 +252,7 @@ def build_pending_tickets_adaptive_card(                                        
     pending_ticket_entries: List[Dict[str, str]],  # One structured entry per pending ticket.
 ) -> Dict[str, Any]:                                                                                          # Return a Teams message payload.
     """Build a compact Adaptive Card for scheduled pending-ticket summaries."""  # Plain docstring.
-    body_blocks: List[Dict[str, Any]] = [                                        # Start with dev label, then title + summary rows.
-        {"type": "TextBlock", "text": "Sent from dev script", "wrap": True, "size": "Small", "color": "Accent", "spacing": "None"},  # Dev origin label at the very top.
+    body_blocks: List[Dict[str, Any]] = [                                        # Start with static title + summary rows.
         {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Medium", "wrap": True},  # Card title.
         {"type": "TextBlock", "text": summary, "wrap": True, "spacing": "Small"},                  # Summary text.
     ]                               # End initial body rows.
