@@ -1,0 +1,16 @@
+services:
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.notification
+    container_name: notification-service
+    env_file: .env
+    environment:
+      TOKEN_SERVICE_URL: http://token-service:8000  # Reach token-service via shared Docker network.
+    networks:
+      - zoho-token-service_default  # Join the token service's network so DNS resolves.
+    restart: unless-stopped
+
+networks:
+  zoho-token-service_default:
+    external: true  # Created by the zoho-token-service compose stack.

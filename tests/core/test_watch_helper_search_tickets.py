@@ -15,7 +15,6 @@ REPO_ROOT            = Path(__file__).resolve().parents[2]                      
 PAYLOAD_FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "zoho_tickets_search_raw_payload.txt"
                                                                                          # Fixture holding the captured Zoho "RAW RESPONSE TEXT" payload.
 
-# is class main sara mock data para hua hay
 class StubResponse:
     """Tiny requests-like response stub used by monkeypatched requests.get."""  # Keep monkeypatch setup simple.
 
@@ -66,7 +65,7 @@ def test_search_tickets_uses_fixture_payload_and_returns_validated_rows(monkeypa
         captured_call["headers"] = headers  # Authorization/org headers.
         captured_call["params"]  = params   # Query parameters built by search_tickets().
         captured_call["timeout"] = timeout  # Timeout configured by function.
-        return StubResponse(status_code=200, payload=payload, url=f"{url}?mock=true")  # One successful page.
+        return StubResponse(status_code=200, payload=payload, url=f"{url}?mock=true", text=json.dumps(payload))  # One successful page.
 
     monkeypatch.setattr(watch_helper.requests, "get", fake_get)  # Replace network call with local stub.
 
@@ -86,6 +85,79 @@ def test_search_tickets_uses_fixture_payload_and_returns_validated_rows(monkeypa
     assert "createdTimeRange" in captured_call["params"]                             # Time window added when hours is provided.
     assert captured_call["params"]["sortBy"]         == "-createdTime"               # Sort requested initially.
     assert captured_call["timeout"]                  == 30                           # Function timeout contract.
+
+
+def test_search_tickets_paginates_across_multiple_pages(monkeypatch) -> None:
+    """search_tickets should fetch all pages and combine them into one list."""  # Pagination contract.
+
+    monkeypatch.setenv("ZOHO_DESK_ORG_ID", "test-org-id")                      # Required by header builder.
+    monkeypatch.setattr(watch_helper, "PAGE_SIZE", 2)                          # Shrink page size so we can test with few tickets.
+
+    page_1_tickets = [                                                         # First page: full (2 tickets = PAGE_SIZE).
+        {"id": "t1", "ticketNumber": "001", "status": "Assigned", "statusType": "Open", "subject": "First",  "createdTime": "2026-01-01T10:00:00.000Z", "webUrl": "https://desk.zoho.com/1"},
+        {"id": "t2", "ticketNumber": "002", "status": "Assigned", "statusType": "Open", "subject": "Second", "createdTime": "2026-01-01T09:00:00.000Z", "webUrl": "https://desk.zoho.com/2"},
+    ]
+    page_2_tickets = [                                                         # Second page: partial (1 ticket < PAGE_SIZE = last page).
+        {"id": "t3", "ticketNumber": "003", "status": "Pending",  "statusType": "Open", "subject": "Third",  "createdTime": "2026-01-01T08:00:00.000Z", "webUrl": "https://desk.zoho.com/3"},
+    ]
+
+    calls = []                                                                 # Track requests to verify pagination offsets.
+
+    def fake_get(url: str, headers: Dict[str, str], params: Dict[str, Any], timeout: int) -> StubResponse:
+        calls.append(dict(params))                                             # Snapshot params for each call.
+        page_idx = params["from"] // 2                                         # Derive which page was requested.
+        if page_idx == 0:                                                      # First page.
+            return StubResponse(status_code=200, payload={"data": page_1_tickets, "count": 3}, text="ok")
+        else:                                                                  # Second page.
+            return StubResponse(status_code=200, payload={"data": page_2_tickets, "count": 3}, text="ok")
+
+    monkeypatch.setattr(watch_helper.requests, "get", fake_get)                # Patch network I/O.
+
+    result = watch_helper.search_tickets(                                      # Exercise pagination.
+        token    = "token-123",                                                # Synthetic token.
+        statuses = ["Assigned", "Pending"],                                    # Two statuses.
+    )                                                                          # End call.
+
+    assert len(result)          == 3                                           # All three tickets from both pages.
+    result_ids                  = [r["id"] for r in result]                    # Collect IDs in returned order.
+    assert "t1" in result_ids                                                  # Page 1 ticket present.
+    assert "t2" in result_ids                                                  # Page 1 ticket present.
+    assert "t3" in result_ids                                                  # Page 2 ticket present.
+    assert len(calls)           == 2                                           # Exactly two requests made.
+    assert calls[0]["from"]     == 0                                           # First request starts at offset 0.
+    assert calls[1]["from"]     == 2                                           # Second request starts at offset 2 (PAGE_SIZE).
+
+
+def test_search_tickets_stops_at_page_limit(monkeypatch) -> None:
+    """search_tickets should stop fetching when page_limit is reached."""       # Page cap contract.
+
+    monkeypatch.setenv("ZOHO_DESK_ORG_ID", "test-org-id")                      # Required by header builder.
+    monkeypatch.setattr(watch_helper, "PAGE_SIZE", 2)                          # Small page size.
+
+    full_page = [                                                              # Always return a full page (so pagination would continue without cap).
+        {"id": "t1", "ticketNumber": "001", "status": "Assigned", "statusType": "Open", "subject": "First",  "createdTime": "2026-01-01T10:00:00.000Z", "webUrl": "https://desk.zoho.com/1"},
+        {"id": "t2", "ticketNumber": "002", "status": "Assigned", "statusType": "Open", "subject": "Second", "createdTime": "2026-01-01T09:00:00.000Z", "webUrl": "https://desk.zoho.com/2"},
+    ]
+
+    calls = []                                                                 # Track request count.
+
+    def fake_get(url: str, headers: Dict[str, str], params: Dict[str, Any], timeout: int) -> StubResponse:
+        calls.append(dict(params))                                             # Record each call.
+        return StubResponse(status_code=200, payload={"data": full_page, "count": 100}, text="ok")
+
+    monkeypatch.setattr(watch_helper.requests, "get", fake_get)                # Patch network I/O.
+
+    result = watch_helper.search_tickets(                                      # Exercise page limit.
+        token      = "token-123",                                              # Synthetic token.
+        statuses   = ["Assigned"],                                             # Single status.
+        page_limit = 3,                                                        # Stop after 3 pages.
+    )                                                                          # End call.
+
+    assert len(calls)  == 3                                                    # Exactly 3 requests (page_limit).
+    assert len(result) == 6                                                    # 3 pages x 2 tickets = 6 total.
+    assert calls[0]["from"] == 0                                               # First page offset.
+    assert calls[1]["from"] == 2                                               # Second page offset.
+    assert calls[2]["from"] == 4                                               # Third page offset.
 
 
 def test_search_tickets_retries_without_sort_when_zoho_returns_422(monkeypatch) -> None:

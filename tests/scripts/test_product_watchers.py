@@ -74,7 +74,7 @@ PRODUCT_CASES = [
         product_id                  = "nm_studies",
         prefix                      = "NM_STUDIES",
         use_global_target_fallback  = False,
-        default_target_products     = ["nm studies"],
+        default_target_products     = ["nm studies"],  # lowercase in registry default
         banner_env_var              = "NM_STUDIES_BANNER_TEXT",
         default_banner_text         = "Please verify whether any radiologist scheduled today is able to read this study. If none are available, notify the team immediately so we can secure a radiologist who can complete the read.",
     ),
@@ -97,7 +97,14 @@ PRODUCT_CASES = [
         product_id                  = "password_reset",
         prefix                      = "PASSWORD_RESET",
         use_global_target_fallback  = False,
-        default_target_products     = ["password reset"],
+        default_target_products     = ["Password Reset"],
+    ),
+    ProductCase(
+        case_id                     = "unlock_account",
+        product_id                  = "unlock_account",
+        prefix                      = "UNLOCK_ACCOUNT",
+        use_global_target_fallback  = False,
+        default_target_products     = ["Unlock Account"],
     ),
     ProductCase(
         case_id                     = "general",
@@ -140,7 +147,7 @@ def test_registry_config_uses_defined_fallback_behavior(monkeypatch, case: Produ
     config = _build_case_config(case)
 
     expected_active = {"Assigned", "Pending", "Escalated"}                                              # Shared active fallback.
-    expected_target = ["global product one", "global product two"] if case.use_global_target_fallback else case.default_target_products
+    expected_target = ["Global Product One", "Global Product Two"] if case.use_global_target_fallback else case.default_target_products
 
     assert config.active_statuses      == expected_active  # Active statuses should follow fallback behavior.
     assert config.target_product_names == expected_target  # Target products should follow fallback behavior.
@@ -170,7 +177,7 @@ def test_registry_config_prefers_product_specific_env_over_global(monkeypatch, c
     config = _build_case_config(case)
 
     assert config.active_statuses         == {"Open", "Waiting"}      # Product-specific active statuses should win.
-    assert config.target_product_names    == ["override one", "override two"]  # Product-specific targets should win.
+    assert config.target_product_names    == ["Override One", "Override Two"]  # Product-specific targets should win (original casing preserved).
     assert config.max_age_hours           == 36                        # Product-specific max-age override should parse as int.
     assert config.min_age_minutes         == 9                         # Product-specific min-age override should parse as int.
     assert config.notify_cooldown_seconds == 120                       # Product-specific cooldown override should parse as int.

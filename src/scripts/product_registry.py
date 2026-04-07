@@ -4,7 +4,7 @@ import os                                        # Read product-specific env ove
 from typing import Any, Dict, List, Optional     # Keep type hints explicit and readable.
 
 from src.core.watch_helper import (              # Reuse shared watch-helper contracts and defaults.
-    ProductConfig,                               # Shared config object consumed by run_product_loop_once.
+    ProductConfig,                               # Shared config object consumed by process_tickets.
     MAX_AGE_HOURS_DEFAULT,                       # Shared default lookback.
     MIN_AGE_MINUTES_DEFAULT,                     # Shared default minimum age before alerting.
 )                                                # End helper imports.
@@ -79,7 +79,15 @@ PRODUCT_REGISTRY: Dict[str, Dict[str, Any]] = {
         "name": "Password Reset",
         "teams_webhook_env_var": "TEAMS_WEBHOOK_PASSWORD_RESET",
         "last_sent_filename": "sent_password_reset_notifications.json",
-        "default_target_product_names": ["password reset"],
+        "default_target_product_names": ["Password Reset"],
+        "use_global_target_fallback": False,
+    },
+    "unlock_account": {
+        "prefix": "UNLOCK_ACCOUNT",
+        "name": "Unlock Account",
+        "teams_webhook_env_var": "TEAMS_WEBHOOK_PASSWORD_RESET",
+        "last_sent_filename": "sent_unlock_account_notifications.json",
+        "default_target_product_names": ["Unlock Account"],
         "use_global_target_fallback": False,
     },
     "general": {
@@ -118,9 +126,9 @@ def _csv_set(raw_text: str) -> set[str]:  # Convert comma text into a set of tri
     return {entry.strip() for entry in raw_text.split(",") if entry.strip()}
 
 
-def _csv_lower_list(raw_text: str) -> List[str]:  # Convert comma text into a lower-case list preserving order.
-    """Parse comma-separated text into a lower-case list of non-empty values."""  # Brief docstring.
-    return [entry.strip().lower() for entry in raw_text.split(",") if entry.strip()]
+def _csv_list(raw_text: str) -> List[str]:  # Convert comma text into a list preserving original casing.
+    """Parse comma-separated text into a list of non-empty values with original casing."""  # Brief docstring.
+    return [entry.strip() for entry in raw_text.split(",") if entry.strip()]
 
 
 def build_product_config(product_id: str, spec: Dict[str, Any]) -> ProductConfig:  # Build one ProductConfig from registry + env values.
@@ -148,7 +156,7 @@ def build_product_config(product_id: str, spec: Dict[str, Any]) -> ProductConfig
 
     return ProductConfig(
         name                    = str(spec["name"]),
-        target_product_names    = _csv_lower_list(target_raw),
+        target_product_names    = _csv_list(target_raw),
         active_statuses         = _csv_set(active_raw),
         teams_webhook_env_var   = str(spec["teams_webhook_env_var"]),
         last_sent_filename      = str(spec["last_sent_filename"]),

@@ -5,7 +5,7 @@ import os  # Read pending watcher environment overrides.
 from src.core.watch_helper import (             # Reuse shared helper logic to keep this module thin.
     PendingSummaryConfig,               # Data holder for pending summary settings.
     delete_pending_summary_state_file,  # Shared startup cleanup helper for pending slot state.
-    get_access_token,                   # Token helper used for standalone runs.
+    get_token_from_service,              # Fetch Zoho token from internal token service.
     parse_hhmm_schedule,                # Shared parser for HH:MM;HH:MM LA schedule strings.
     run_pending_summary_loop_once,      # Shared one-cycle runner for pending summaries.
 )                                       # End helper imports.
@@ -38,5 +38,5 @@ def delete_pending_schedule_state_file() -> None:                               
 
 
 if __name__ == "__main__":             # Allow running this watcher directly for manual checks.
-    shared_token = get_access_token()  # Fetch or reuse Zoho token.
+    shared_token = get_token_from_service()  # Fetch Zoho token from internal token service.
     run_cycle(shared_token)            # Execute one schedule-aware pending summary cycle.
