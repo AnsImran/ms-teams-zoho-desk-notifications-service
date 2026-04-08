@@ -52,6 +52,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -59,12 +62,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push images
-        run: |
-          docker build -t ghcr.io/ansimran/teams-notifications-service/notification-service:latest -f Dockerfile.notification .
-          docker build -t ghcr.io/ansimran/teams-notifications-service/dashboard:latest -f Dockerfile.dashboard .
-          docker push ghcr.io/ansimran/teams-notifications-service/notification-service:latest
-          docker push ghcr.io/ansimran/teams-notifications-service/dashboard:latest
+      - name: Build and push notification-service
+        uses: docker/build-push-action@v6
+        env:
+          SOURCE_DATE_EPOCH: 0
+        with:
+          context: .
+          file: Dockerfile.notification
+          push: true
+          tags: ghcr.io/ansimran/teams-notifications-service/notification-service:latest
+          provenance: false
+          sbom: false
+          cache-from: type=registry,ref=ghcr.io/ansimran/teams-notifications-service/notification-service:buildcache
+          cache-to: type=registry,ref=ghcr.io/ansimran/teams-notifications-service/notification-service:buildcache,mode=max
+
+      - name: Build and push dashboard
+        uses: docker/build-push-action@v6
+        env:
+          SOURCE_DATE_EPOCH: 0
+        with:
+          context: .
+          file: Dockerfile.dashboard
+          push: true
+          tags: ghcr.io/ansimran/teams-notifications-service/dashboard:latest
+          provenance: false
+          sbom: false
+          cache-from: type=registry,ref=ghcr.io/ansimran/teams-notifications-service/dashboard:buildcache
+          cache-to: type=registry,ref=ghcr.io/ansimran/teams-notifications-service/dashboard:buildcache,mode=max
 
   deploy:
     name: Deploy (container)
