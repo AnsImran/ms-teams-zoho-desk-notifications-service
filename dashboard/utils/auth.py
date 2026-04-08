@@ -43,6 +43,6 @@ def require_login() -> None:                                                    
     st.sidebar.title(f"Welcome, {st.session_state.get('name', 'User')}")         # Greet the user.
     authenticator.logout("Logout", "sidebar")                                    # Add logout button.
     st.sidebar.divider()                                                         # Visual separator.
-    st.sidebar.page_link("dashboard/app.py", label="Home", icon="🏠")           # Home link.
-    st.sidebar.page_link("dashboard/pages/1_products.py", label="Products", icon="📦")  # Products link.
-    st.sidebar.page_link("dashboard/pages/2_active_tickets.py", label="Active Tickets", icon="🎫")  # Tickets link.
+    st.sidebar.page_link("app.py", label="Home", icon="🏠")                      # Home link (relative to entrypoint).
+    st.sidebar.page_link("pages/1_products.py", label="Products", icon="📦")    # Products link.
+    st.sidebar.page_link("pages/2_active_tickets.py", label="Active Tickets", icon="🎫")  # Tickets link.
