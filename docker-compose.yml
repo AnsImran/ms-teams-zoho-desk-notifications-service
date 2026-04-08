@@ -29,8 +29,9 @@ services:
       - "8501:8501"                                           # Expose Streamlit dashboard to the internet.
     volumes:
       - shared-config:/app/config                             # Shared config volume for products.json.
-      - /var/run/docker.sock:/var/run/docker.sock             # Docker socket for restarting notification-service.
+      - /var/run/docker.sock:/var/run/docker.sock             # Docker socket for notification-service status checks.
       - dashboard-logs:/app/logs                              # Persistent logs that survive container rebuilds.
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro  # Streamlit auth credentials (host file, read-only).
     networks:
       - zoho-token-service_default                            # Join token service network for Zoho API access.
     restart: unless-stopped
