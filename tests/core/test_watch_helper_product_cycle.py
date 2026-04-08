@@ -154,13 +154,14 @@ def test_sends_alert_for_matching_ticket(monkeypatch, config, lookup, fixed_now)
 
 def test_routes_magic_ticket_to_magic_webhook(monkeypatch, config, lookup, fixed_now) -> None:
     """Magic phrase tickets should use the shared magic test webhook."""  # Magic route.
+    monkeypatch.setattr(watch_helper, "MAGIC_TEST_WEBHOOK", "https://magic.example/test")  # Ensure magic webhook is set.
     posted = []
     monkeypatch.setattr(watch_helper, "post_to_teams", lambda url, payload: posted.append(url))
     monkeypatch.setattr(watch_helper, "contains_magic_phrase", lambda *_texts: True)
     monkeypatch.setattr(watch_helper, "build_teams_adaptive_card", lambda **_kw: {"card": "test"})
     total, _ = _run(monkeypatch, [_make_ticket()], lookup, fixed_now=fixed_now)
     assert total == 1
-    assert posted[0] == watch_helper.MAGIC_TEST_WEBHOOK
+    assert posted[0] == "https://magic.example/test"
 
 
 def test_skips_send_when_webhook_missing(monkeypatch, fixed_now) -> None:
