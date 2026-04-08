@@ -8,7 +8,6 @@ import streamlit as st                                        # Streamlit UI fra
 from dashboard.utils.auth import require_login                # Shared auth gate.
 from src.core.config_manager import (                         # JSON config read/write.
     load_products,
-    save_products,
     add_product,
     remove_product,
     slugify,
@@ -21,18 +20,25 @@ from dashboard.utils.docker_ops import (                      # Docker operation
 
 st.set_page_config(page_title="Products", page_icon="📦", layout="wide")
 require_login()                                               # Block page content until authenticated.
-st.title("Product Configuration")
 
 # ---------------------------------------------------------------------------
-# Notification service status
+# Sidebar — notification service status
 # ---------------------------------------------------------------------------
 
 status = get_notification_service_status()
 status_emoji = "🟢" if status["status"] == "running" else "🔴"
 st.sidebar.markdown(f"**Notification Service:** {status_emoji} {status['status']}")
+st.sidebar.divider()
 
 # ---------------------------------------------------------------------------
-# Current products table
+# Page header
+# ---------------------------------------------------------------------------
+
+st.title("📦 Product Configuration")
+st.caption("Add, view, or remove products that the notification service monitors.")
+
+# ---------------------------------------------------------------------------
+# Current products
 # ---------------------------------------------------------------------------
 
 st.subheader("Current Products")
@@ -41,39 +47,40 @@ data     = load_products()
 products = data.get("products", {})
 
 if not products:
-    st.info("No products configured. Add one below.")
+    st.info("No products configured yet. Use the form below to add one.")
 else:
     for key, entry in products.items():
-        with st.expander(f"**{entry.get('name', key)}** — min age: {entry.get('min_age_minutes', '?')} min", expanded=False):
+        with st.expander(f"**{entry.get('name', key)}** — alert after {entry.get('min_age_minutes', '?')} min", expanded=False):
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.markdown(f"**Key:** `{key}`")
                 st.markdown(f"**Target product names:** {', '.join(entry.get('target_product_names', []))}")
                 st.markdown(f"**Active statuses:** {', '.join(entry.get('active_statuses', []))}")
-                st.markdown(f"**Max age hours:** {entry.get('max_age_hours', 24)}")
                 webhook = entry.get("teams_webhook_url", "")
-                st.markdown(f"**Webhook:** {'configured' if webhook else 'NOT SET'}")
+                st.markdown(f"**Webhook:** {'✅ configured' if webhook else '❌ NOT SET'}")
                 banner = entry.get("banner_text", "")
                 if banner:
                     st.markdown(f"**Banner:** {banner}")
             with col2:
-                if st.button(f"Remove", key=f"remove_{key}", type="secondary"):
+                if st.button("Remove", key=f"remove_{key}", type="secondary"):
                     st.session_state[f"confirm_remove_{key}"] = True
 
                 if st.session_state.get(f"confirm_remove_{key}", False):
-                    st.warning(f"Are you sure you want to remove **{entry.get('name', key)}**?")
+                    st.warning(f"Remove **{entry.get('name', key)}**?")
                     col_yes, col_no = st.columns(2)
                     with col_yes:
-                        if st.button("Yes, remove", key=f"confirm_yes_{key}", type="primary"):
+                        if st.button("Yes", key=f"confirm_yes_{key}", type="primary"):
                             remove_product(key)
                             result = restart_notification_service()
-                            st.success(f"Removed '{entry.get('name', key)}'. {result}")
+                            st.success(f"Removed. {result}")
                             st.session_state.pop(f"confirm_remove_{key}", None)
                             st.rerun()
                     with col_no:
                         if st.button("Cancel", key=f"confirm_no_{key}"):
                             st.session_state.pop(f"confirm_remove_{key}", None)
                             st.rerun()
+
+    st.caption(f"{len(products)} product(s) configured.")
 
 # ---------------------------------------------------------------------------
 # Add new product form
@@ -87,10 +94,9 @@ with st.form("add_product_form", clear_on_submit=True):
     webhook_url    = st.text_input("Teams Webhook URL *", help="The Microsoft Teams webhook URL for notifications.")
     use_test_wh    = st.checkbox("Use test webhook instead", help="Override with the shared test webhook for development.")
     min_age        = st.number_input("Min Age (minutes) *", min_value=1, value=5, help="Minimum ticket age before sending a notification.")
-    max_age        = st.number_input("Max Age (hours)", min_value=1, value=24, help="Search lookback window in hours.")
     target_names   = st.text_input("Target Product Names (comma-separated)", help="Leave blank to use the product name. Use commas for multiple names.")
     banner_text    = st.text_area("Banner Text (optional)", help="Instruction text shown at the top of the Teams card.")
-    submitted      = st.form_submit_button("Add Product")
+    submitted      = st.form_submit_button("Add Product", type="primary")
 
     if submitted:
         if not product_name.strip():
@@ -102,13 +108,11 @@ with st.form("add_product_form", clear_on_submit=True):
             if key in products:
                 st.error(f"A product with key '{key}' already exists. Remove it first or use a different name.")
             else:
-                # Resolve target product names.
                 if target_names.strip():
                     parsed_targets = [n.strip() for n in target_names.split(",") if n.strip()]
                 else:
                     parsed_targets = [product_name.strip()]
 
-                # Resolve webhook URL.
                 if use_test_wh:
                     from src.core.watch_helper import MAGIC_TEST_WEBHOOK
                     resolved_webhook = MAGIC_TEST_WEBHOOK
@@ -119,7 +123,6 @@ with st.form("add_product_form", clear_on_submit=True):
                     "name":                    product_name.strip(),
                     "teams_webhook_url":       resolved_webhook,
                     "min_age_minutes":         min_age,
-                    "max_age_hours":           max_age,
                     "target_product_names":    parsed_targets,
                     "active_statuses":         ["Assigned", "Pending", "Escalated"],
                     "banner_text":             banner_text.strip(),

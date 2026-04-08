@@ -145,7 +145,6 @@ def resolve_product(key: str, spec: dict) -> dict:                              
 
     # Resolve numeric settings.
     min_age = int(os.getenv(f"{prefix}_MIN_AGE_MINUTES", os.getenv("MIN_AGE_MINUTES", "5")))     # Min age minutes.
-    max_age = int(os.getenv(f"{prefix}_MAX_AGE_HOURS", os.getenv("MAX_AGE_HOURS", "24")))        # Max age hours.
     cooldown_raw = os.getenv(f"{prefix}_NOTIFY_COOLDOWN_SECONDS", "").strip()                    # Optional cooldown.
     cooldown_sec = int(cooldown_raw) if cooldown_raw else None                                   # Parse or None.
 
@@ -153,7 +152,6 @@ def resolve_product(key: str, spec: dict) -> dict:                              
         "name":                    spec["name"],                                 # Friendly product label.
         "teams_webhook_url":       webhook_url,                                  # Resolved webhook URL.
         "min_age_minutes":         min_age,                                      # Minimum age before alerting.
-        "max_age_hours":           max_age,                                      # Search lookback window.
         "target_product_names":    target_names,                                 # Product names to match.
         "active_statuses":         active_statuses,                              # Status strings considered open.
         "banner_text":             banner_text,                                  # Optional instruction banner.

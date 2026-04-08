@@ -27,7 +27,6 @@ DEFAULT_TZ_NAME = os.getenv("TZ_NAME", "America/Los_Angeles")  # Time zone strin
 LA_TZ           = pytz.timezone(DEFAULT_TZ_NAME)               # Time zone object we reuse everywhere.
 
 CHECK_EVERY_SECONDS     = int(os.getenv("CHECK_EVERY_SECONDS", "30"))                                       # Polling interval shared by all products.
-MAX_AGE_HOURS_DEFAULT   = int(os.getenv("MAX_AGE_HOURS", "24"))                                             # Default search lookback window in hours.
 MIN_AGE_MINUTES_DEFAULT = int(os.getenv("MIN_AGE_MINUTES", "5"))                                            # Default minimum ticket age before alerting.
 PAGE_LIMIT              = int(os.getenv("PAGE_LIMIT", "50"))                                                # Hard cap on search pages to avoid endless loops.
 PAGE_SIZE               = int(os.getenv("PAGE_SIZE", "100"))                                                # Page size for Zoho search calls.
@@ -52,7 +51,6 @@ class ProductConfig:  # Holds settings for one product watcher.
     active_statuses:       Set[str]                                     # Status strings considered open.
     teams_webhook_url:    str                                           # Teams webhook URL for this product (stored directly, not as env var name).
     last_sent_filename:    str                                          # File name where we remember cooldown timestamps.
-    max_age_hours:         int = MAX_AGE_HOURS_DEFAULT                  # How far back to search; defaults to shared value.
     min_age_minutes:       int = MIN_AGE_MINUTES_DEFAULT                # Minimum age before alert; defaults to shared value.
     notify_cooldown_seconds: Optional[int] = None                       # Optional per-product cooldown override in seconds.
     card_banner_text:      str = ""                                     # Optional top-of-card banner text (used for product-specific instructions).

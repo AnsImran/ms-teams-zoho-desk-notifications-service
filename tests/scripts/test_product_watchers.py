@@ -28,7 +28,6 @@ SAMPLE_PRODUCT = {                                                             #
     "name": "Super-Stat",
     "teams_webhook_url": "https://teams.example/wh",
     "min_age_minutes": 5,
-    "max_age_hours": 24,
     "target_product_names": ["Super Stat"],
     "active_statuses": ["Assigned", "Pending", "Escalated"],
     "banner_text": "",
@@ -47,7 +46,6 @@ def test_build_config_from_json_uses_all_fields() -> None:
     assert config.name                    == "Super-Stat"
     assert config.teams_webhook_url       == "https://teams.example/wh"
     assert config.min_age_minutes         == 5
-    assert config.max_age_hours           == 24
     assert config.target_product_names    == ["Super Stat"]
     assert config.active_statuses         == {"Assigned", "Pending", "Escalated"}
     assert config.card_banner_text        == ""

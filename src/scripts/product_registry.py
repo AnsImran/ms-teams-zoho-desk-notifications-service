@@ -1,10 +1,9 @@
-"""Load product configurations from products.json (with .env overrides for backward compatibility)."""  # Module purpose.
+"""Load product configurations from products.json."""  # Module purpose.
 
 from typing import Any, Dict, List               # Keep type hints explicit and readable.
 
 from src.core.watch_helper import (              # Reuse shared watch-helper contracts and defaults.
     ProductConfig,                               # Shared config object consumed by process_tickets.
-    MAX_AGE_HOURS_DEFAULT,                       # Shared default lookback.
     MIN_AGE_MINUTES_DEFAULT,                     # Shared default minimum age before alerting.
 )                                                # End helper imports.
 from src.core.config_manager import load_products  # Read products.json from disk.
@@ -18,7 +17,6 @@ def build_product_config_from_json(key: str, entry: Dict[str, Any]) -> ProductCo
     name             = str(entry.get("name", key))                                     # Friendly product label.
     webhook_url      = str(entry.get("teams_webhook_url", ""))                         # Teams webhook URL (stored directly).
     min_age          = int(entry.get("min_age_minutes", MIN_AGE_MINUTES_DEFAULT))      # Minimum age before alerting.
-    max_age          = int(entry.get("max_age_hours", MAX_AGE_HOURS_DEFAULT))           # Search lookback window.
     target_names     = list(entry.get("target_product_names", [name]))                 # Product names to match; defaults to [name].
     active_statuses  = set(entry.get("active_statuses", DEFAULT_ACTIVE_STATUSES))      # Status strings considered open.
     banner_text      = str(entry.get("banner_text", ""))                               # Optional instruction banner.
@@ -32,7 +30,6 @@ def build_product_config_from_json(key: str, entry: Dict[str, Any]) -> ProductCo
         active_statuses         = active_statuses,                                     # Status strings considered open.
         teams_webhook_url       = webhook_url,                                         # Teams webhook URL (direct, not env var).
         last_sent_filename      = last_sent_file,                                      # Auto-generated cooldown file name.
-        max_age_hours           = max_age,                                             # Search lookback window.
         min_age_minutes         = min_age,                                             # Minimum age before alerting.
         notify_cooldown_seconds = cooldown_sec,                                        # Optional per-product cooldown override.
         card_banner_text        = banner_text,                                         # Optional top-of-card banner text.
