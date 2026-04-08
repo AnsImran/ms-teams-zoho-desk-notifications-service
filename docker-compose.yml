@@ -1,5 +1,6 @@
 services:
   notification-service:
+    image: ghcr.io/ansimran/teams-notifications-service/notification-service:latest
     build:
       context: .
       dockerfile: Dockerfile.notification
@@ -15,6 +16,7 @@ services:
     restart: unless-stopped
 
   dashboard:
+    image: ghcr.io/ansimran/teams-notifications-service/dashboard:latest
     build:
       context: .
       dockerfile: Dockerfile.dashboard
