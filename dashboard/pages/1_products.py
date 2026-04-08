@@ -4,6 +4,7 @@ import sys                                                    # Add project root
 import os                                                     # Build file paths.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))  # Allow imports from project root.
 
+import time                                                   # Sleep while waiting for config to be picked up.
 import streamlit as st                                        # Streamlit UI framework.
 from dashboard.utils.auth import require_login                # Shared auth gate.
 from src.core.config_manager import (                         # JSON config read/write.
@@ -13,22 +14,12 @@ from src.core.config_manager import (                         # JSON config read
     slugify,
 )
 from dashboard.utils.docker_ops import (                      # Docker operations.
-    rebuild_notification_service,
     get_notification_service_status,
 )
 
 
 st.set_page_config(page_title="Products", page_icon="📦", layout="wide")
 require_login()                                               # Block page content until authenticated.
-
-# ---------------------------------------------------------------------------
-# Block the entire page while a rebuild is in progress
-# ---------------------------------------------------------------------------
-
-if st.session_state.get("rebuild_in_progress", False):
-    st.warning("The notification service is being rebuilt. Please wait...")
-    st.spinner("Rebuilding...")
-    st.stop()
 
 # ---------------------------------------------------------------------------
 # Sidebar — notification service status
@@ -38,24 +29,6 @@ status = get_notification_service_status()
 status_emoji = "🟢" if status["status"] == "running" else "🔴"
 st.sidebar.markdown(f"**Notification Service:** {status_emoji} {status['status']}")
 st.sidebar.divider()
-
-# ---------------------------------------------------------------------------
-# Helper — rebuild with blocking UI
-# ---------------------------------------------------------------------------
-
-def _rebuild_with_feedback(action_label: str) -> bool:                         # Shared rebuild flow with spinner + result feedback.
-    """Run a full rebuild and show progress. Returns True on success."""
-    st.session_state["rebuild_in_progress"] = True
-    with st.spinner(f"{action_label} — rebuilding the notification service from scratch. This may take 2–3 minutes..."):
-        result = rebuild_notification_service()
-    st.session_state["rebuild_in_progress"] = False
-
-    if result == "ok":
-        st.toast("Notification service rebuilt successfully.", icon="✅")
-        return True
-    else:
-        st.error(f"Rebuild failed: {result}")
-        return False
 
 # ---------------------------------------------------------------------------
 # Page header
@@ -98,10 +71,11 @@ else:
                     with col_yes:
                         if st.button("Yes", key=f"confirm_yes_{key}", type="primary"):
                             remove_product(key)
-                            success = _rebuild_with_feedback(f"Removing '{entry.get('name', key)}'")
                             st.session_state.pop(f"confirm_remove_{key}", None)
-                            if success:
-                                st.rerun()
+                            with st.spinner(f"Removing '{entry.get('name', key)}'... waiting for the notification service to pick up the change."):
+                                time.sleep(35)
+                            st.success(f"Product '{entry.get('name', key)}' removed.")
+                            st.rerun()
                     with col_no:
                         if st.button("Cancel", key=f"confirm_no_{key}"):
                             st.session_state.pop(f"confirm_remove_{key}", None)
@@ -156,6 +130,7 @@ with st.form("add_product_form", clear_on_submit=True):
                     "notify_cooldown_seconds": None,
                 }
                 add_product(key, new_entry)
-                success = _rebuild_with_feedback(f"Adding '{product_name.strip()}'")
-                if success:
-                    st.rerun()
+                with st.spinner(f"Adding '{product_name.strip()}'... waiting for the notification service to pick up the change."):
+                    time.sleep(35)
+                st.success(f"Product '{product_name.strip()}' added.")
+                st.rerun()

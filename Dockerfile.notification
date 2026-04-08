@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir \
 
 ENV PYTHONUNBUFFERED=1
 
-COPY . .
+COPY main.py .
+COPY src/ src/
+COPY config/ config/
 
 # Bake the repo's products.json so entrypoint can seed the shared volume on first run.
 RUN mkdir -p /app/config.baked && \

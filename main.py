@@ -31,21 +31,7 @@ def run_all_products_loop() -> None:                                            
         delete_cooldown_file(product_config)
     pending_watch.delete_pending_schedule_state_file()                                        # Reset pending schedule state once at startup.
 
-    config_lookup = build_config_lookup(product_configs)                                      # Build product-name-to-config lookup once.
-
-    status_union     = set()                                                                  # Aggregate status names across all products.
-    product_name_set = set()                                                                  # Aggregate product names across all products.
-    for product_config in product_configs:                                                    # Walk every product config to build shared filter sets.
-        status_union.update(product_config.active_statuses)                                   # Add this product's watched statuses.
-        product_name_set.update(product_config.target_product_names)                          # Add this product's target names.
-    shared_statuses      = sorted(status_union)                                               # Shared status filter used by one pre-fetch search call.
-    shared_product_names = sorted(product_name_set)                                           # All product names sent to Zoho productName filter.
-
     cooldown_state: dict = {}                                                                 # In-memory cooldown state keyed by filename, persisted each cycle.
-    for product_config in product_configs:                                                    # Pre-load any existing cooldown files (empty after startup cleanup).
-        script_dir = os.path.dirname(os.path.abspath(__file__))                               # Current folder path.
-        path       = os.path.join(script_dir, "src", "core", product_config.last_sent_filename)  # Build path to cooldown file.
-        cooldown_state[product_config.last_sent_filename] = load_last_sent(path)              # Load cooldown data (empty dict if file missing).
 
     pending_executor = ThreadPoolExecutor(max_workers=1)                                      # Dedicated background worker for pending summary runs.
     pending_future   = None                                                                   # Track currently-running pending summary job, if any.
@@ -53,6 +39,29 @@ def run_all_products_loop() -> None:                                            
     try:                                                                                      # Ensure we always close the pending executor on shutdown.
         while True:                                                                           # Repeat forever until manually stopped.
             try:                                                                              # Protect the loop so one failure does not kill the process.
+                # ---- Hot-reload product config from products.json each cycle ----
+                product_configs = load_product_configs_from_env()                             # Re-read products.json so dashboard changes are picked up.
+                if not product_configs:                                                       # All products removed via dashboard mid-run.
+                    print("[main] WARNING: No products configured. Sleeping...")              # Log clearly so the operator knows why nothing is happening.
+                    time.sleep(CHECK_EVERY_SECONDS)                                          # Wait before checking again.
+                    continue                                                                  # Skip to next cycle.
+
+                config_lookup = build_config_lookup(product_configs)                          # Rebuild product-name-to-config lookup from fresh config.
+
+                status_union     = set()                                                      # Aggregate status names across all products.
+                product_name_set = set()                                                      # Aggregate product names across all products.
+                for product_config in product_configs:                                        # Walk every product config to build shared filter sets.
+                    status_union.update(product_config.active_statuses)                       # Add this product's watched statuses.
+                    product_name_set.update(product_config.target_product_names)              # Add this product's target names.
+                shared_statuses      = sorted(status_union)                                   # Shared status filter used by one pre-fetch search call.
+                shared_product_names = sorted(product_name_set)                               # All product names sent to Zoho productName filter.
+
+                for product_config in product_configs:                                        # Initialize cooldown state for any newly added products.
+                    if product_config.last_sent_filename not in cooldown_state:               # New product that wasn't seen before.
+                        script_dir = os.path.dirname(os.path.abspath(__file__))               # Current folder path.
+                        path       = os.path.join(script_dir, "src", "core", product_config.last_sent_filename)
+                        cooldown_state[product_config.last_sent_filename] = load_last_sent(path)  # Load or init empty.
+
                 token = get_token_from_service()                                              # Fetch the Zoho access token from the centralized token service.
                 if pending_future is not None and pending_future.done():                      # Collect completed pending job results before launching next one.
                     try:                                                                      # Surface pending worker exceptions without killing main loop.
