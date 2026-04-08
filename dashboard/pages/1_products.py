@@ -70,9 +70,10 @@ else:
                     col_yes, col_no = st.columns(2)
                     with col_yes:
                         if st.button("Yes", key=f"confirm_yes_{key}", type="primary"):
-                            remove_product(key)
-                            result = restart_notification_service()
-                            st.success(f"Removed. {result}")
+                            with st.spinner("Removing product and restarting service..."):
+                                remove_product(key)
+                                restart_notification_service()
+                            st.toast(f"Removed '{entry.get('name', key)}'.", icon="✅")
                             st.session_state.pop(f"confirm_remove_{key}", None)
                             st.rerun()
                     with col_no:
@@ -128,7 +129,8 @@ with st.form("add_product_form", clear_on_submit=True):
                     "banner_text":             banner_text.strip(),
                     "notify_cooldown_seconds": None,
                 }
-                add_product(key, new_entry)
-                result = restart_notification_service()
-                st.success(f"Added '{product_name.strip()}' (key: {key}). {result}")
+                with st.spinner("Adding product and restarting service..."):
+                    add_product(key, new_entry)
+                    restart_notification_service()
+                st.toast(f"Added '{product_name.strip()}'.", icon="✅")
                 st.rerun()
