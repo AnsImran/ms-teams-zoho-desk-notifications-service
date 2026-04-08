@@ -25,8 +25,7 @@ flowchart LR
     JSON["products.json<br>(shared volume)"]
 
     DB -- "read/write" --> JSON
-    NS -- "read on startup" --> JSON
-    DB -- "docker compose restart" --> NS
+    NS -- "read every 30 sec" --> JSON
     NS -- "GET /token" --> TS
     DB -- "GET /token" --> TS
     NS -- "search by product + status" --> ZD
@@ -95,7 +94,7 @@ flowchart LR
 
 The Streamlit dashboard runs as a separate Docker container on port 8501. It provides:
 
-- **Products page** — view, add, remove products. Changes update `products.json` and automatically restart the notification service.
+- **Products page** — view, add, remove products. Changes update `products.json` and are picked up by the notification service within 30 seconds (no restart needed).
 - **Active Tickets page** — live view of Zoho Desk tickets matching configured products.
 - **Authentication** — login required (username/password via `secrets.toml`).
 
@@ -103,7 +102,7 @@ The dashboard is fully independent — if it crashes, the notification service k
 
 ## Product Configuration (products.json)
 
-Products are configured in `products.json` on a shared Docker volume. The dashboard reads and writes this file. The notification service reads it on startup.
+Products are configured in `products.json` on a shared Docker volume. The dashboard reads and writes this file. The notification service re-reads it every polling cycle (30 seconds).
 
 ```json
 {
@@ -143,9 +142,9 @@ Source of truth: `config/products.json` (managed via dashboard).
 2. Log in
 3. Go to **Products** page
 4. Fill in the **Add New Product** form (product name, webhook URL, min age)
-5. Click **Add Product** — the notification service restarts automatically
+5. Click **Add Product** — the UI blocks for ~35 seconds while the notification service picks up the change
 
-**No code changes, no redeployment needed.**
+**No code changes, no restart, no redeployment needed.**
 
 ## Repository Layout
 
@@ -172,7 +171,7 @@ Source of truth: `config/products.json` (managed via dashboard).
 │   │   └── 2_active_tickets.py      # Active ticket viewer
 │   ├── utils/
 │   │   ├── auth.py                  # Shared authentication helper
-│   │   ├── docker_ops.py            # Container restart via docker compose
+│   │   ├── docker_ops.py            # Container status checks via Docker SDK
 │   │   └── zoho_client.py           # Zoho API client for ticket queries
 │   └── .streamlit/
 │       ├── config.toml              # Streamlit theme settings
@@ -194,29 +193,16 @@ Source of truth: `config/products.json` (managed via dashboard).
 
 ## Deployment
 
-### Docker Compose (Production)
+Images are built in CI and pushed to **GitHub Container Registry** (GHCR). The EC2 server
+pulls pre-built images — it never builds locally. This enables **selective container
+updates**: only the container whose code changed gets recreated.
 
-Three containers on a shared Docker network:
+For a detailed explanation, see [docs/deployment-and-architecture.md](docs/deployment-and-architecture.md).
 
-```yaml
-services:
-  notification-service:          # Polls Zoho, sends Teams alerts
-    volumes: [shared-config]     # Reads products.json
-    networks: [zoho-token-service_default]
+### Local development
 
-  dashboard:                     # Streamlit admin UI
-    ports: ["8501:8501"]         # Exposed to internet
-    volumes: [shared-config, docker.sock, dashboard-logs]
-    networks: [zoho-token-service_default]
-
-volumes:
-  shared-config:                 # products.json (shared between services)
-  dashboard-logs:                # Persistent dashboard logs
-```
-
-Deploy commands:
 ```bash
-docker compose up --build -d     # Start/rebuild
+docker compose up --build -d     # Build and start locally
 docker compose logs -f           # Watch logs
 docker compose down              # Stop
 ```
@@ -226,7 +212,8 @@ docker compose down              # Stop
 Workflow: `.github/workflows/ci.yml`
 
 - **Test job**: runs on push to `main`/`dev` and PRs to `main` — installs deps, compiles, runs all tests.
-- **Deploy job**: runs only on push to `main` after tests pass — SSHes to server, pulls latest, rebuilds containers.
+- **Build and push job**: builds both images and pushes to GHCR with registry-based caching.
+- **Deploy job**: SSHes to EC2 server, pulls images, runs `docker compose up -d`. Only containers whose image changed get recreated.
 
 ## Environment Configuration
 
