@@ -93,7 +93,7 @@ jobs:
           git checkout main
           git reset --hard origin/main
 
-          docker compose up --build -d --remove-orphans
+          BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose up --build -d --remove-orphans
           docker image prune -f --filter "label=com.docker.compose.project=teams-notifications-service"
 
           echo "Waiting for services to start..."
