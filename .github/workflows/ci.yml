@@ -93,8 +93,8 @@ jobs:
           git checkout main
           git reset --hard origin/main
 
-          docker compose down --rmi local --remove-orphans
-          docker compose up --build -d
+          docker compose up --build -d --remove-orphans
+          docker image prune -f --filter "label=com.docker.compose.project=teams-notifications-service"
 
           echo "Waiting for services to start..."
           sleep 5
