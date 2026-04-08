@@ -18,8 +18,23 @@ from dashboard.utils.docker_ops import (                      # Docker operation
 )
 
 
+WAIT_SECONDS = 35                                            # Just over one polling cycle so the change is guaranteed to be picked up.
+
 st.set_page_config(page_title="Products", page_icon="📦", layout="wide")
 require_login()                                               # Block page content until authenticated.
+
+# ---------------------------------------------------------------------------
+# Full-page block while waiting for config change to be picked up
+# ---------------------------------------------------------------------------
+
+if st.session_state.get("waiting_message"):                   # A config change was just made — block the entire page.
+    st.title("📦 Product Configuration")
+    with st.spinner(st.session_state["waiting_message"]):
+        time.sleep(WAIT_SECONDS)
+    st.session_state.pop("waiting_message", None)             # Clear the flag so next rerun shows the normal page.
+    st.success("Done — the notification service has picked up the change.")
+    time.sleep(2)                                             # Brief pause so the user sees the success message.
+    st.rerun()                                                # Rerun to show the updated product list.
 
 # ---------------------------------------------------------------------------
 # Sidebar — notification service status
@@ -72,9 +87,7 @@ else:
                         if st.button("Yes", key=f"confirm_yes_{key}", type="primary"):
                             remove_product(key)
                             st.session_state.pop(f"confirm_remove_{key}", None)
-                            with st.spinner(f"Removing '{entry.get('name', key)}'... waiting for the notification service to pick up the change."):
-                                time.sleep(35)
-                            st.success(f"Product '{entry.get('name', key)}' removed.")
+                            st.session_state["waiting_message"] = f"Removing '{entry.get('name', key)}'... waiting for the notification service to pick up the change."
                             st.rerun()
                     with col_no:
                         if st.button("Cancel", key=f"confirm_no_{key}"):
@@ -130,7 +143,5 @@ with st.form("add_product_form", clear_on_submit=True):
                     "notify_cooldown_seconds": None,
                 }
                 add_product(key, new_entry)
-                with st.spinner(f"Adding '{product_name.strip()}'... waiting for the notification service to pick up the change."):
-                    time.sleep(35)
-                st.success(f"Product '{product_name.strip()}' added.")
+                st.session_state["waiting_message"] = f"Adding '{product_name.strip()}'... waiting for the notification service to pick up the change."
                 st.rerun()
