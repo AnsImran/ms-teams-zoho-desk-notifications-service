@@ -50,7 +50,7 @@ class ProductConfig:  # Holds settings for one product watcher.
     name:                  str                                          # Friendly product label for logs.
     target_product_names:  List[str]                                    # Product names to match exactly (case-insensitive).
     active_statuses:       Set[str]                                     # Status strings considered open.
-    teams_webhook_env_var: str                                          # Env var name that stores the Teams webhook for this product.
+    teams_webhook_url:    str                                           # Teams webhook URL for this product (stored directly, not as env var name).
     last_sent_filename:    str                                          # File name where we remember cooldown timestamps.
     max_age_hours:         int = MAX_AGE_HOURS_DEFAULT                  # How far back to search; defaults to shared value.
     min_age_minutes:       int = MIN_AGE_MINUTES_DEFAULT                # Minimum age before alert; defaults to shared value.
@@ -466,7 +466,7 @@ def process_tickets(                                                            
         )                                                                                                     # Finish payload build.
 
         magic_hit      = contains_magic_phrase(subject_line, description_text)                                 # Check magic phrase.
-        target_webhook = MAGIC_TEST_WEBHOOK if magic_hit else os.getenv(config.teams_webhook_env_var, "").strip()  # Pick webhook URL.
+        target_webhook = MAGIC_TEST_WEBHOOK if magic_hit else (config.teams_webhook_url or "").strip()              # Pick webhook URL.
         if not target_webhook:                                                                                # If no webhook configured...
             print(f"[{config.name}] Skip ticket {ticket_number} ({ticket_id}) - no webhook configured.")      # Log skip.
             continue                                                                                          # Skip sending.

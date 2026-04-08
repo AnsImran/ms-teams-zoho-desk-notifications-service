@@ -49,7 +49,7 @@ def config() -> watch_helper.ProductConfig:
         name                  = "Super-Stat",
         target_product_names  = ["Super Stat"],
         active_statuses       = {"Assigned", "Pending"},
-        teams_webhook_env_var = "TEAMS_WEBHOOK_SUPERSTAT",
+        teams_webhook_url     = "https://teams.example/wh",
         last_sent_filename    = "sent_superstat_notifications.json",
         min_age_minutes       = 5,
     )
@@ -68,11 +68,6 @@ def _run(monkeypatch, tickets, lookup, cooldown_state=None, fixed_now=None, webh
         monkeypatch.setattr(watch_helper, "now_la", lambda: fixed_now)
     if cooldown_state is None:                                      # Default to empty cooldown state.
         cooldown_state = {}
-    seen_webhooks: set = set()                                       # Track already-set webhook env vars.
-    for cfg in lookup.values():                                     # Set webhook env var for each config.
-        if cfg.teams_webhook_env_var not in seen_webhooks:            # Avoid setting same env var twice.
-            monkeypatch.setenv(cfg.teams_webhook_env_var, webhook)
-            seen_webhooks.add(cfg.teams_webhook_env_var)
     return watch_helper.process_tickets(                            # Run the single-loop processor.
         tickets        = tickets,
         config_lookup  = lookup,
@@ -168,14 +163,19 @@ def test_routes_magic_ticket_to_magic_webhook(monkeypatch, config, lookup, fixed
     assert posted[0] == watch_helper.MAGIC_TEST_WEBHOOK
 
 
-def test_skips_send_when_webhook_missing(monkeypatch, config, lookup, fixed_now) -> None:
+def test_skips_send_when_webhook_missing(monkeypatch, fixed_now) -> None:
     """If no webhook is configured and no magic phrase, ticket should be skipped."""  # No webhook.
+    empty_webhook_config = watch_helper.ProductConfig(                            # Config with empty webhook URL.
+        name="Super-Stat", target_product_names=["Super Stat"],
+        active_statuses={"Assigned", "Pending"}, teams_webhook_url="",
+        last_sent_filename="sent_superstat_notifications.json", min_age_minutes=5,
+    )
+    empty_lookup = watch_helper.build_config_lookup([empty_webhook_config])
     posted = []
     monkeypatch.setattr(watch_helper, "post_to_teams", lambda url, payload: posted.append(url))
     monkeypatch.setattr(watch_helper, "contains_magic_phrase", lambda *_texts: False)
     monkeypatch.setattr(watch_helper, "build_teams_adaptive_card", lambda **_kw: {"card": "test"})
-    monkeypatch.delenv(config.teams_webhook_env_var, raising=False)
-    total, _ = _run(monkeypatch, [_make_ticket()], lookup, fixed_now=fixed_now, webhook="")
+    total, _ = _run(monkeypatch, [_make_ticket()], empty_lookup, fixed_now=fixed_now)
     assert total == 0
     assert posted == []
 
@@ -228,12 +228,12 @@ def test_multiple_products_independent_cooldowns(monkeypatch, fixed_now) -> None
     """Each product should have its own independent cooldown map."""  # Independence contract.
     config_a = watch_helper.ProductConfig(
         name="Super-Stat", target_product_names=["Super Stat"],
-        active_statuses={"Assigned"}, teams_webhook_env_var="WH_A",
+        active_statuses={"Assigned"}, teams_webhook_url="https://a.example",
         last_sent_filename="a.json", min_age_minutes=1,
     )
     config_b = watch_helper.ProductConfig(
         name="Amendments", target_product_names=["Amendments"],
-        active_statuses={"Assigned"}, teams_webhook_env_var="WH_B",
+        active_statuses={"Assigned"}, teams_webhook_url="https://b.example",
         last_sent_filename="b.json", min_age_minutes=1,
     )
     lookup = watch_helper.build_config_lookup([config_a, config_b])
@@ -242,8 +242,6 @@ def test_multiple_products_independent_cooldowns(monkeypatch, fixed_now) -> None
     monkeypatch.setattr(watch_helper, "post_to_teams", lambda url, payload: None)
     monkeypatch.setattr(watch_helper, "contains_magic_phrase", lambda *_texts: False)
     monkeypatch.setattr(watch_helper, "build_teams_adaptive_card", lambda **_kw: {"card": "test"})
-    monkeypatch.setenv("WH_A", "https://a.example")
-    monkeypatch.setenv("WH_B", "https://b.example")
 
     cooldown_state: dict = {}
     tickets = [

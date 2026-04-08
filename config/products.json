@@ -1,0 +1,180 @@
+{
+  "products": {
+    "superstat": {
+      "name": "Super-Stat",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/4d7cdb7dd4f346409135e722573db793/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=bf5HDVT9aO-8GnzMqBjmmtyrWO7Kxq_G0G2cgEvKapU",
+      "min_age_minutes": 5,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Super Stat"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "code_stroke": {
+      "name": "Code Stroke",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/23b9f6f97f3d45749fb851d5a590a957/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=WMZwy9J4yjwjvOTcf05JEHc8UHK6aTRGS6FWNFNB2Is",
+      "min_age_minutes": 5,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Code Stroke Alert"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "critical_findings": {
+      "name": "Critical Findings",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/4c2edfbd2fdf43cca143b6e47d7fa634/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=diyG3jUrHErLPUXBk8LDZibc-FP740dy8YuSU_N7hBc",
+      "min_age_minutes": 5,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Critical Finding"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "ONLY TAG THE TICKET AS RESOLVED WHEN THE REPORT HAS BEEN AMMENDED BY THE RADIOLOGIST AND INCLUDES THAT INFORMATION WAS ALREADY RELAYED BY THE SUPPORT TEAM",
+      "notify_cooldown_seconds": null
+    },
+    "amendments": {
+      "name": "Amendments",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/7d95c84e1757456a88307d229e0b7419/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=mmvUmyex1AcFVxwVv2q4uG56LOw1RCtB_63a8y1FJsg",
+      "min_age_minutes": 60,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Amendments"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "nm_studies": {
+      "name": "NM Studies",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/14760bf7af674f6d99e5ee0a80469514/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=gHoc8nxGN_kt99REQspQLZtzsbibDYHIdKLQnYzBD9U",
+      "min_age_minutes": 30,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "NM Studies"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "Please verify whether any radiologist scheduled today is able to read this study. If none are available, notify the team immediately so we can secure a radiologist who can complete the read.",
+      "notify_cooldown_seconds": null
+    },
+    "it_system_studies": {
+      "name": "IT / System Studies",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c15741de39274e2592b1b721ab95996e/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=cduHjLu1o7tCdw7nYXa9JJMiVM_zUMeB7ANPwec3RzE",
+      "min_age_minutes": 240,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "IT / Systems Issues"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "reading_requests": {
+      "name": "Reading Requests",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/93d415cdff33450dbee93afa24c32474/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=kXOhXLB9V4wmeWArMfL_YRJcRw1lAZR9ol26UwkPzhU",
+      "min_age_minutes": 30,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Reading Requests"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "password_reset": {
+      "name": "Password Reset",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM",
+      "min_age_minutes": 240,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Password Reset"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "unlock_account": {
+      "name": "Unlock Account",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/0914c4da9462495f94ba9c6eb21f228a/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=U6i-SXJbj5gi-GfrPtwK2WRoRAaH_55gFMOypbkRupM",
+      "min_age_minutes": 240,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Unlock Account"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "general": {
+      "name": "General",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/986c03a6a56c4c8fadfda4ba945bfef0/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=nBThnXGLxHCURPTiadABpr_7Y_urZ3Rkvde5SfdyUGI",
+      "min_age_minutes": 240,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "General"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    },
+    "consults_and_physician_connection": {
+      "name": "Consults & Physician Connection",
+      "teams_webhook_url": "https://defaulteaa017ab544342dfa2fa8cf8760698.84.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/b48e4e38cc12474caf049a2c80215144/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=uVEjBvEtYfAH8hZ4uKag3-Bc0M_z8974PuKIo57BM2A",
+      "min_age_minutes": 240,
+      "max_age_hours": 24,
+      "target_product_names": [
+        "Consults & Physician Connection"
+      ],
+      "active_statuses": [
+        "Assigned",
+        "Pending",
+        "Escalated"
+      ],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    }
+  }
+}

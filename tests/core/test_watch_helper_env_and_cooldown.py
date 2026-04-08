@@ -13,7 +13,7 @@ def _product_config(last_sent_filename: str = "sent_test_notifications.json") ->
         name                  = "Test Product",
         target_product_names  = ["test product"],
         active_statuses       = {"Assigned"},
-        teams_webhook_env_var = "TEAMS_WEBHOOK_TEST",
+        teams_webhook_url = "TEAMS_WEBHOOK_TEST",
         last_sent_filename    = last_sent_filename,
     )
 

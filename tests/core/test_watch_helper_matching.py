@@ -62,12 +62,12 @@ def test_build_config_lookup_maps_names_to_configs() -> None:
     """Lookup should map each lower-case product name to its config."""  # Core lookup contract.
     config_a = watch_helper.ProductConfig(
         name="Super-Stat", target_product_names=["Super Stat"],
-        active_statuses={"Assigned"}, teams_webhook_env_var="WH_A",
+        active_statuses={"Assigned"}, teams_webhook_url="WH_A",
         last_sent_filename="a.json",
     )
     config_b = watch_helper.ProductConfig(
         name="Password Reset", target_product_names=["Password Reset", "Unlock Account"],
-        active_statuses={"Assigned"}, teams_webhook_env_var="WH_B",
+        active_statuses={"Assigned"}, teams_webhook_url="WH_B",
         last_sent_filename="b.json",
     )
     lookup = watch_helper.build_config_lookup([config_a, config_b])
