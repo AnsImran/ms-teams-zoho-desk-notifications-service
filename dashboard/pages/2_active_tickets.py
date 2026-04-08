@@ -5,11 +5,13 @@ import os                                                     # Build file paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))  # Allow imports from project root.
 
 import streamlit as st                                        # Streamlit UI framework.
+from dashboard.utils.auth import require_login                # Shared auth gate.
 from src.core.config_manager import load_products             # Read current product config.
 from dashboard.utils.zoho_client import fetch_active_tickets  # Fetch tickets from Zoho.
 
 
 st.set_page_config(page_title="Active Tickets", page_icon="🎫", layout="wide")
+require_login()                                               # Block page content until authenticated.
 st.title("Active Tickets")
 
 # ---------------------------------------------------------------------------

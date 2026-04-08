@@ -5,6 +5,7 @@ import os                                                     # Build file paths
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))  # Allow imports from project root.
 
 import streamlit as st                                        # Streamlit UI framework.
+from dashboard.utils.auth import require_login                # Shared auth gate.
 from src.core.config_manager import (                         # JSON config read/write.
     load_products,
     save_products,
@@ -19,6 +20,7 @@ from dashboard.utils.docker_ops import (                      # Docker operation
 
 
 st.set_page_config(page_title="Products", page_icon="📦", layout="wide")
+require_login()                                               # Block page content until authenticated.
 st.title("Product Configuration")
 
 # ---------------------------------------------------------------------------
