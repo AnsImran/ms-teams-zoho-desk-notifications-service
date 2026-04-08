@@ -1,40 +1,78 @@
-"""Docker operations for the dashboard — restart the notification service."""  # Module purpose.
+"""Docker operations for the dashboard — rebuild the notification service."""  # Module purpose.
 
-import subprocess                                                              # Run shell commands for docker compose.
-import docker                                                                  # Docker SDK for container status queries.
-
-
-COMPOSE_DIR = "/app"                                                           # Directory containing docker-compose.yml inside the dashboard container.
+import subprocess  # Run shell commands for docker compose.
+import time        # Sleep between health-check polls.
+import docker      # Docker SDK for container status queries.
 
 
-def restart_notification_service() -> str:                                     # Restart the notification container via docker compose.
-    """Restart the notification-service using docker compose."""               # Docstring in plain words.
-    try:                                                                       # Wrap in try so dashboard never crashes.
-        result = subprocess.run(                                               # Call docker compose restart as a shell command.
-            ["docker", "compose", "restart", "notification-service"],          # Compose-aware restart command.
-            capture_output = True,                                             # Capture stdout and stderr.
-            text           = True,                                             # Return strings, not bytes.
-            timeout        = 30,                                               # Safety timeout.
-            cwd            = COMPOSE_DIR,                                      # Run from the compose directory.
-        )                                                                      # End subprocess call.
-        if result.returncode == 0:                                             # If command succeeded...
-            return "Notification service restarted successfully."              # Success message.
-        return f"ERROR: {result.stderr.strip()}"                               # Return stderr on failure.
-    except subprocess.TimeoutExpired:                                          # If restart took too long...
-        return "ERROR: Restart timed out after 30 seconds."                    # Timeout message.
-    except Exception as error:                                                 # Any other error.
-        return f"ERROR: {error}"                                               # Clear error for the UI.
+COMPOSE_DIR         = "/app"   # Directory containing docker-compose.yml inside the dashboard container.
+HEALTH_POLL_SECONDS = 3        # Seconds between health-check polls after rebuild.
+HEALTH_TIMEOUT      = 120      # Max seconds to wait for the service to become healthy.
+
+
+def rebuild_notification_service() -> str:                                     # Full tear-down + rebuild of the notification container.
+    """Stop, remove, rebuild, and restart the notification-service container."""
+    try:
+        # 1. Stop the running container.
+        subprocess.run(
+            ["docker", "compose", "stop", "notification-service"],
+            capture_output=True, text=True, timeout=60, cwd=COMPOSE_DIR,
+        )
+
+        # 2. Remove the stopped container so nothing lingers.
+        subprocess.run(
+            ["docker", "compose", "rm", "-f", "notification-service"],
+            capture_output=True, text=True, timeout=30, cwd=COMPOSE_DIR,
+        )
+
+        # 3. Rebuild the image and start a fresh container.
+        result = subprocess.run(
+            ["docker", "compose", "up", "--build", "-d", "--force-recreate", "notification-service"],
+            capture_output=True, text=True, timeout=300, cwd=COMPOSE_DIR,
+        )
+        if result.returncode != 0:
+            return f"ERROR: {result.stderr.strip()}"
+
+        # 4. Prune dangling images so old layers don't fill disk.
+        subprocess.run(
+            ["docker", "image", "prune", "-f"],
+            capture_output=True, text=True, timeout=30,
+        )
+
+        # 5. Wait until the container is running.
+        healthy = wait_for_healthy()
+        if not healthy:
+            return "ERROR: Service did not become healthy within the timeout."
+
+        return "ok"
+
+    except subprocess.TimeoutExpired:
+        return "ERROR: Rebuild timed out."
+    except Exception as error:
+        return f"ERROR: {error}"
+
+
+def wait_for_healthy() -> bool:                                                # Poll until the notification-service container is running.
+    """Poll container status until it reports 'running' or we time out."""
+    elapsed = 0
+    while elapsed < HEALTH_TIMEOUT:
+        status = get_notification_service_status()
+        if status["status"] == "running":
+            return True
+        time.sleep(HEALTH_POLL_SECONDS)
+        elapsed += HEALTH_POLL_SECONDS
+    return False
 
 
 def get_notification_service_status() -> dict:                                 # Get container status info.
-    """Return status info about the notification-service container."""         # Docstring in plain words.
-    try:                                                                       # Wrap in try so dashboard never crashes.
-        client    = docker.from_env()                                          # Connect to Docker daemon via socket.
-        container = client.containers.get("notification-service")              # Find the notification container.
-        return {                                                               # Return status dict.
-            "status":  container.status,                                       # e.g., "running", "exited".
-            "started": container.attrs.get("State", {}).get("StartedAt", ""),  # Container start time.
-            "image":   container.image.tags[0] if container.image.tags else "", # Image name.
-        }                                                                      # End status dict.
-    except Exception as error:                                                 # Any error.
-        return {"status": f"error: {error}", "started": "", "image": ""}       # Fallback status.
+    """Return status info about the notification-service container."""
+    try:
+        client    = docker.from_env()
+        container = client.containers.get("notification-service")
+        return {
+            "status":  container.status,
+            "started": container.attrs.get("State", {}).get("StartedAt", ""),
+            "image":   container.image.tags[0] if container.image.tags else "",
+        }
+    except Exception as error:
+        return {"status": f"error: {error}", "started": "", "image": ""}
