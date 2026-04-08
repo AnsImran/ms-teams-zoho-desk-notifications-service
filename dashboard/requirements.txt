@@ -5,3 +5,5 @@ requests>=2,<3
 filelock>=3,<4
 bcrypt>=4,<5
 python-dotenv>=1,<2
+pytz
+"pydantic>=2,<3"
