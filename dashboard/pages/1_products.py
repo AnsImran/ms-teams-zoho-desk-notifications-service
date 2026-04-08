@@ -50,7 +50,7 @@ st.sidebar.divider()
 # ---------------------------------------------------------------------------
 
 st.title("📦 Product Configuration")
-st.caption("Add, view, or remove monitored products.")
+st.caption("Manage monitored products.")
 
 # ---------------------------------------------------------------------------
 # Current products
