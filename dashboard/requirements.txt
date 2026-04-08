@@ -1,0 +1,7 @@
+streamlit>=1.40,<2
+streamlit-authenticator>=0.4,<1
+docker>=7,<8
+requests>=2,<3
+filelock>=3,<4
+bcrypt>=4,<5
+python-dotenv>=1,<2

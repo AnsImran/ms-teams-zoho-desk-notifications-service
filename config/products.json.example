@@ -1,0 +1,14 @@
+{
+  "products": {
+    "super_stat": {
+      "name": "Super-Stat",
+      "teams_webhook_url": "https://your-teams-webhook-url-here",
+      "min_age_minutes": 5,
+      "max_age_hours": 24,
+      "target_product_names": ["Super Stat"],
+      "active_statuses": ["Assigned", "Pending", "Escalated"],
+      "banner_text": "",
+      "notify_cooldown_seconds": null
+    }
+  }
+}

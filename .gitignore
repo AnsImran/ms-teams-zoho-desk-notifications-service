@@ -26,11 +26,16 @@ credentials
 **/__pycache__/
 **/__pycache__/**
 
-**/sent_superstat_notifications.json
-**/sent_code_stroke_notifications.json
-**/sent_notifications.json
-**/sent_critical_findings_notifications.json
-**/sent_reading_requests_notifications.json
+# Cooldown and state files
+**/sent_*_notifications.json
+**/sent_pending_summary_slots.json
+
+# Product config (contains webhook URLs)
+config/products.json
+config/products.json.lock
+
+# Dashboard secrets
+dashboard/.streamlit/secrets.toml
 
 # Local-only module (kept locally, managed in separate repository later)
 src/automatic report generation/

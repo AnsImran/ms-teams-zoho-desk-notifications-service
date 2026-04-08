@@ -15,4 +15,12 @@ ENV PYTHONUNBUFFERED=1
 
 COPY . .
 
+# Bake the repo's products.json so entrypoint can seed the shared volume on first run.
+RUN mkdir -p /app/config.baked && \
+    if [ -f /app/config/products.json ]; then cp /app/config/products.json /app/config.baked/products.json; fi
+
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "main.py"]

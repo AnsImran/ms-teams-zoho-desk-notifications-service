@@ -6,11 +6,37 @@ services:
     container_name: notification-service
     env_file: .env
     environment:
-      TOKEN_SERVICE_URL: http://token-service:8000  # Reach token-service via shared Docker network.
+      TOKEN_SERVICE_URL:  http://token-service:8000           # Reach token-service via shared Docker network.
+      PRODUCTS_JSON_PATH: /app/config/products.json           # Products config on shared volume.
+    volumes:
+      - shared-config:/app/config                             # Shared config volume for products.json.
     networks:
-      - zoho-token-service_default  # Join the token service's network so DNS resolves.
+      - zoho-token-service_default                            # Join the token service's network so DNS resolves.
     restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: dashboard
+    env_file: .env
+    environment:
+      TOKEN_SERVICE_URL:  http://token-service:8000           # Reach token-service for ticket queries.
+      PRODUCTS_JSON_PATH: /app/config/products.json           # Read/write products config on shared volume.
+    ports:
+      - "8501:8501"                                           # Expose Streamlit dashboard to the internet.
+    volumes:
+      - shared-config:/app/config                             # Shared config volume for products.json.
+      - /var/run/docker.sock:/var/run/docker.sock             # Docker socket for restarting notification-service.
+      - dashboard-logs:/app/logs                              # Persistent logs that survive container rebuilds.
+    networks:
+      - zoho-token-service_default                            # Join token service network for Zoho API access.
+    restart: unless-stopped
+
+volumes:
+  shared-config:                                              # Named volume for products.json (shared between services).
+  dashboard-logs:                                             # Persistent log storage for the dashboard.
 
 networks:
   zoho-token-service_default:
-    external: true  # Created by the zoho-token-service compose stack.
+    external: true                                            # Created by the zoho-token-service compose stack.
