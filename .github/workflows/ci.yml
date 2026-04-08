@@ -61,8 +61,10 @@ jobs:
 
       - name: Build and push images
         run: |
-          docker compose build
-          docker compose push
+          docker build -t ghcr.io/ansimran/teams-notifications-service/notification-service:latest -f Dockerfile.notification .
+          docker build -t ghcr.io/ansimran/teams-notifications-service/dashboard:latest -f Dockerfile.dashboard .
+          docker push ghcr.io/ansimran/teams-notifications-service/notification-service:latest
+          docker push ghcr.io/ansimran/teams-notifications-service/dashboard:latest
 
   deploy:
     name: Deploy (container)
