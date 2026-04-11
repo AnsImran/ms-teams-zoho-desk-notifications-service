@@ -51,7 +51,7 @@ def test_correct_url_called(monkeypatch):
     monkeypatch.setattr(requests, "get", _capture)
     monkeypatch.setattr(watch_helper, "TOKEN_SERVICE_URL", "http://test-host:9000")
     watch_helper.get_token_from_service()
-    assert captured_url == "http://test-host:9000/token"
+    assert captured_url == "http://test-host:9000/v1/token"
 
 
 def test_raises_on_connection_error(monkeypatch):
@@ -92,4 +92,4 @@ def test_env_url_override(monkeypatch):
     monkeypatch.setattr(requests, "get", _capture)
     monkeypatch.setattr(watch_helper, "TOKEN_SERVICE_URL", "http://custom:7777")
     watch_helper.get_token_from_service()
-    assert captured_url == "http://custom:7777/token"
+    assert captured_url == "http://custom:7777/v1/token"

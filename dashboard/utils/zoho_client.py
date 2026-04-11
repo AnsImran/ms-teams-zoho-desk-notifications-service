@@ -17,7 +17,7 @@ ZOHO_DESK_BASE    = os.getenv("ZOHO_DESK_BASE", "https://desk.zoho.com").rstrip(
 
 def get_token() -> str:                                                                      # Fetch Zoho token from centralized service.
     """Fetch the current Zoho access token from the token service."""                        # Docstring in plain words.
-    url      = f"{TOKEN_SERVICE_URL}/token"                                                  # Token endpoint URL.
+    url      = f"{TOKEN_SERVICE_URL}/v1/token"                                               # Versioned token endpoint URL.
     response = requests.get(url, timeout=10)                                                 # GET the cached token.
     response.raise_for_status()                                                              # Fail loudly on HTTP error.
     token = (response.json().get("access_token") or "").strip()                              # Extract token text.

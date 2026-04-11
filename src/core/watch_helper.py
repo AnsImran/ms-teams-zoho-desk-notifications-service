@@ -123,7 +123,7 @@ def created_time_range_la(hours: int) -> str:                               # Ma
 
 def get_token_from_service() -> str:                                                       # Fetch Zoho token from the internal token microservice.
     """Fetch the current Zoho access token from the internal token service."""             # Docstring summarizing goal.
-    url = f"{TOKEN_SERVICE_URL}/token"                                                     # Build the token endpoint URL.
+    url = f"{TOKEN_SERVICE_URL}/v1/token"                                                   # Build the versioned token endpoint URL.
     logger.debug("Requesting token from service at %s", url)
     try:                                                                                   # Wrap in try so connection errors are clear.
         response = requests.get(url, timeout=10)                                           # GET the cached token from the service.
@@ -131,9 +131,12 @@ def get_token_from_service() -> str:                                            
     except requests.RequestException as error:                                             # Catch any network or HTTP problem.
         logger.error("Token service unreachable at %s", url, exc_info=error)
         raise RuntimeError(f"Token service unreachable at {url}: {error}") from error      # Re-raise with context.
-    token = (response.json().get("access_token") or "").strip()                            # Pull and normalize token text.
+    body  = response.json()                                                                # Parse full response body.
+    token = (body.get("access_token") or "").strip()                                       # Pull and normalize token text.
     if not token:                                                                          # Protect against blank token values.
         raise RuntimeError(f"Token service returned empty access_token from {url}.")       # Clear error.
+    if body.get("is_stale"):                                                               # Token service reports the token has expired but no fresh one is available.
+        logger.warning("Token service returned a stale token — Zoho calls may fail")
     return token                                                                           # Return the fresh token.
 
 
