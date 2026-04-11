@@ -7,6 +7,9 @@ from src.core.watch_helper import (              # Reuse shared watch-helper con
     MIN_AGE_MINUTES_DEFAULT,                     # Shared default minimum age before alerting.
 )                                                # End helper imports.
 from src.core.config_manager import load_products  # Read products.json from disk.
+from src.core.logger import get_logger             # Centralized structured logging.
+
+logger = get_logger(__name__)                       # Named logger for this module.
 
 
 DEFAULT_ACTIVE_STATUSES = ["Assigned", "Pending", "Escalated"]  # Default statuses when not specified in JSON.
@@ -40,7 +43,9 @@ def load_product_configs_from_env() -> List[ProductConfig]:                     
     """Load product configs from products.json and return them as a list."""           # Docstring in plain words.
     data     = load_products()                                                         # Read products.json from disk.
     products = data.get("products", {})                                                # Pull the products dict.
+    logger.debug("Loaded product entries from JSON — count=%d", len(products))
     configs  = []                                                                      # Collect ProductConfig objects.
     for key, entry in products.items():                                                # Walk each product entry.
         configs.append(build_product_config_from_json(key, entry))                     # Build config and add to list.
+    logger.debug("Built product configs — config_count=%d", len(configs))
     return configs                                                                     # Return all product configs.

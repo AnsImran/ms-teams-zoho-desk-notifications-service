@@ -15,8 +15,11 @@ from src.core.watch_helper import (  # Import shared helpers we need here.
     search_tickets,                  # Shared Zoho ticket search to fetch once per loop.
 )                                    # End of helper imports list.
 
+from src.core.logger import get_logger                                  # Centralized structured logging.
 from src.scripts import pending_watch                                   # Pending summary watcher module (separate scheduled flow).
 from src.scripts.product_registry import load_product_configs_from_env  # Declarative env-driven product configs.
+
+logger = get_logger(__name__)                                            # Named logger for this module.
 
 
 def run_all_products_loop() -> None:                                                          # Main loop that drives the entire service.
@@ -25,6 +28,7 @@ def run_all_products_loop() -> None:                                            
 
     product_configs = load_product_configs_from_env()                                         # Build all product configs from one registry.
     if not product_configs:                                                                   # Safety guard against empty registry.
+        logger.critical("No products configured in PRODUCT_REGISTRY — cannot start")
         raise RuntimeError("No products are configured in PRODUCT_REGISTRY.")
 
     for product_config in product_configs:                                                    # Reset all cooldown files once at startup.
@@ -36,12 +40,15 @@ def run_all_products_loop() -> None:                                            
     pending_executor = ThreadPoolExecutor(max_workers=1)                                      # Dedicated background worker for pending summary runs.
     pending_future   = None                                                                   # Track currently-running pending summary job, if any.
 
+    logger.info("Service starting — %d product(s) configured", len(product_configs))
+
     try:                                                                                      # Ensure we always close the pending executor on shutdown.
         while True:                                                                           # Repeat forever until manually stopped.
             try:                                                                              # Protect the loop so one failure does not kill the process.
                 # ---- Hot-reload product config from products.json each cycle ----
                 product_configs = load_product_configs_from_env()                             # Re-read products.json so dashboard changes are picked up.
                 if not product_configs:                                                       # All products removed via dashboard mid-run.
+                    logger.warning("No products configured this cycle, sleeping")
                     print("[main] WARNING: No products configured. Sleeping...")              # Log clearly so the operator knows why nothing is happening.
                     time.sleep(CHECK_EVERY_SECONDS)                                          # Wait before checking again.
                     continue                                                                  # Skip to next cycle.
@@ -67,11 +74,13 @@ def run_all_products_loop() -> None:                                            
                     try:                                                                      # Surface pending worker exceptions without killing main loop.
                         pending_future.result()                                               # Raise any exception thrown inside pending worker.
                     except Exception as pending_error:                                        # Log pending worker failures clearly.
+                        logger.error("Pending summary worker failed", exc_info=pending_error)
                         print("[main] ERROR in pending summary worker:", repr(pending_error))  # Pending-specific error.
                     pending_future = None                                                     # Clear completed job handle.
                 if pending_future is None:                                                    # Submit only when no pending worker job is currently running.
                     pending_future = pending_executor.submit(pending_watch.run_cycle, token)   # Run pending watcher asynchronously.
 
+                logger.debug("Fetching tickets — statuses=%s, products=%s", shared_statuses, shared_product_names)
                 tickets = search_tickets(token, statuses=shared_statuses, product_names=shared_product_names)  # Fetch tickets once for all products.
                 process_tickets(                                                              # Process every ticket in one pass.
                     tickets        = tickets,                                                  # Pass the shared ticket list.
@@ -79,12 +88,14 @@ def run_all_products_loop() -> None:                                            
                     cooldown_state = cooldown_state,                                          # Pass in-memory cooldown state.
                 )                                                                             # End process_tickets call.
             except Exception as error:                                                        # Catch any unexpected problem.
+                logger.exception("Unhandled error in main loop")
                 print("ERROR in main loop:", repr(error))                                     # Log the problem in simple words.
             print(f"[main] Sleeping for {CHECK_EVERY_SECONDS} seconds...")                    # Tell the operator we are pausing.
             time.sleep(CHECK_EVERY_SECONDS)                                                   # Pause before the next cycle.
             print("")                                                                         # Blank line to separate one cycle from the next.
             print("")                                                                         # Second blank line for clearer spacing.
     finally:                                                                                  # Clean up the background pending executor when process exits.
+        logger.info("Service shutting down, closing pending executor")
         pending_executor.shutdown(wait=False, cancel_futures=True)                             # Stop accepting new pending jobs and cancel queued work.
 
 

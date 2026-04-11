@@ -9,8 +9,11 @@ services:
     environment:
       TOKEN_SERVICE_URL:  http://token-service:8000           # Reach token-service via shared Docker network.
       PRODUCTS_JSON_PATH: /app/config/products.json           # Products config on shared volume.
+      LOG_LEVEL:          INFO                                # Structured log level (DEBUG, INFO, WARNING, ERROR).
+      LOG_DIR:            /app/logs                            # Directory for rotating JSON log files.
     volumes:
       - shared-config:/app/config                             # Shared config volume for products.json.
+      - notification-logs:/app/logs                           # Persistent structured log files.
     networks:
       - zoho-token-service_default                            # Join the token service's network so DNS resolves.
     restart: unless-stopped
@@ -25,6 +28,8 @@ services:
     environment:
       TOKEN_SERVICE_URL:  http://token-service:8000           # Reach token-service for ticket queries.
       PRODUCTS_JSON_PATH: /app/config/products.json           # Read/write products config on shared volume.
+      LOG_LEVEL:          INFO                                # Structured log level (DEBUG, INFO, WARNING, ERROR).
+      LOG_DIR:            /app/logs                            # Directory for rotating JSON log files.
     ports:
       - "8501:8501"                                           # Expose Streamlit dashboard to the internet.
     volumes:
@@ -39,6 +44,7 @@ services:
 volumes:
   shared-config:                                              # Named volume for products.json (shared between services).
   dashboard-logs:                                             # Persistent log storage for the dashboard.
+  notification-logs:                                          # Persistent structured log files for the notification service.
 
 networks:
   zoho-token-service_default:

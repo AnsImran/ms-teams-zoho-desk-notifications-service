@@ -12,9 +12,12 @@ import requests                 # Talk to Zoho Desk and Microsoft Teams over HTT
 from dotenv import load_dotenv  # Pull settings from a .env file automatically.
 from pydantic import ValidationError  # Surface schema-validation failures clearly.
 
+from src.core.logger import get_logger                    # Centralized structured logging.
 from src.schema.zoho_api_schemas import (  # Validate Zoho API payloads before use.
     ZohoTicketSearchResponse,
 )
+
+logger = get_logger(__name__)                               # Named logger for this module.
 
 # Load environment variables as soon as the module imports.
 load_dotenv()  # Makes later env lookups succeed without manual loading.
@@ -121,10 +124,12 @@ def created_time_range_la(hours: int) -> str:                               # Ma
 def get_token_from_service() -> str:                                                       # Fetch Zoho token from the internal token microservice.
     """Fetch the current Zoho access token from the internal token service."""             # Docstring summarizing goal.
     url = f"{TOKEN_SERVICE_URL}/token"                                                     # Build the token endpoint URL.
+    logger.debug("Requesting token from service at %s", url)
     try:                                                                                   # Wrap in try so connection errors are clear.
         response = requests.get(url, timeout=10)                                           # GET the cached token from the service.
         response.raise_for_status()                                                        # Fail loudly on HTTP error.
     except requests.RequestException as error:                                             # Catch any network or HTTP problem.
+        logger.error("Token service unreachable at %s", url, exc_info=error)
         raise RuntimeError(f"Token service unreachable at {url}: {error}") from error      # Re-raise with context.
     token = (response.json().get("access_token") or "").strip()                            # Pull and normalize token text.
     if not token:                                                                          # Protect against blank token values.
@@ -174,8 +179,10 @@ def save_last_sent(path: str, payload: Dict[str, datetime]) -> None:     # Write
 
 def post_to_teams(webhook_url: str, payload: Dict[str, Any]) -> None:  # Push one payload to a Teams webhook.
     """Send a single Adaptive Card payload to Teams via webhook."""    # Straight docstring.
+    logger.debug("Posting to Teams webhook")
     response = requests.post(webhook_url, json=payload, timeout=30)    # POST the JSON body to Teams.
     if response.status_code >= 400:                                    # If Teams returned an error status...
+        logger.error("Teams webhook error — status_code=%d, body=%s", response.status_code, (response.text or "")[:500])
         print("TEAMS WEBHOOK ERROR", response.status_code)             # Log the status code.
         print("Teams response body:", (response.text or "")[:2000])    # Log a short response snippet.
     response.raise_for_status()                                        # Raise on errors so caller can react.
@@ -361,12 +368,14 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None,
             params["createdTimeRange"] = created_time_range_la(hours)                                         # Time window filter.
         if use_sort:                                                                                          # Only include sort when allowed.
             params["sortBy"] = "-createdTime"                                                                 # Ask for newest first.
+        logger.debug("Zoho search request — page=%d, params=%s", page_idx, params)
         print(f"[search] GET {url} params={params}")                                                         # Log the full query for debugging.
         response = requests.get(url, headers=desk_headers(token), params=params, timeout=30)  # Fire request.
         if response.status_code == 422 and use_sort:                                          # If sort is not supported here...
             use_sort = False  # Disable sort and retry same page.
             continue          # Skip to next loop iteration.
         if response.status_code >= 400:                                                                       # For any other error...
+            logger.error("Zoho search HTTP error — status_code=%d, url=%s", response.status_code, response.url)
             print("HTTP ERROR", response.status_code, "for", response.url)  # Log details.
             print("Response body:", (response.text or "")[:2000])           # Log short body snippet.
         response.raise_for_status()  # Raise on HTTP error.
@@ -375,6 +384,7 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None,
         try:                         # Validate Zoho search payload before processing ticket rows.
             search_payload = ZohoTicketSearchResponse.model_validate(response.json())  # Parse top-level payload.
         except ValidationError as error:                                                # Raise clear validation failure.
+            logger.error("Zoho search response schema validation failed", exc_info=error)
             raise RuntimeError(f"Zoho search response failed schema validation: {error}") from error
         data = [ticket.model_dump(mode="python") for ticket in (search_payload.data or [])]  # Convert validated models back to dictionaries for existing code paths.
         if not data:                                  # If page empty...
@@ -384,6 +394,7 @@ def search_tickets(token: str, statuses: List[str], hours: Optional[int] = None,
             break                                                                                             # End pagination.
         page_idx += 1                                                                                         # Move to the next page.
     results.sort(key=lambda item: item.get("createdTime") or "", reverse=True)  # Sort newest first just in case.
+    logger.info("Zoho search complete — %d ticket(s) fetched", len(results))
     return results                                                              # Hand back all collected tickets.
 
 # -----------------------------
@@ -438,6 +449,7 @@ def process_tickets(                                                            
             elapsed = (now_local - last_time).total_seconds()                                                 # Seconds since last send.
             if cooldown_seconds > 0 and elapsed < cooldown_seconds:                                           # If still in cooldown...
                 wait_minutes = (cooldown_seconds - elapsed) / 60.0                                            # Minutes remaining.
+                logger.debug("Ticket in cooldown — product=%s, ticket_id=%s, wait_minutes=%.1f", config.name, ticket_id, wait_minutes)
                 print(f"[{config.name}] Skip ticket {ticket_id} - cooldown {wait_minutes:.1f} min left.")     # Log skip.
                 continue                                                                                      # Move on.
 
@@ -446,6 +458,7 @@ def process_tickets(                                                            
         description_text = ticket.get("description") or ticket.get("descriptionText") or ""                   # Read description text.
         web_url          = ticket.get("webUrl", "") or ""                                                     # Read web URL for button.
         reason           = f"age ok ({age_minutes}m old)" if age_minutes >= 0 else "age unknown"              # Build reason text.
+        logger.info("Sending ticket alert — product=%s, ticket_number=%s, ticket_id=%s, reason=%s", config.name, ticket_number, ticket_id, reason)
         print(f"[{config.name}] ALERT: Ticket {ticket_number} ({ticket_id}) reason={reason}")                 # Log alert intent.
 
         teams_payload = build_teams_adaptive_card(                                                            # Build Teams payload.
@@ -466,10 +479,12 @@ def process_tickets(                                                            
         magic_hit      = contains_magic_phrase(subject_line, description_text)                                 # Check magic phrase.
         target_webhook = MAGIC_TEST_WEBHOOK if magic_hit else (config.teams_webhook_url or "").strip()              # Pick webhook URL.
         if not target_webhook:                                                                                # If no webhook configured...
+            logger.warning("No webhook configured — product=%s, ticket_id=%s", config.name, ticket_id)
             print(f"[{config.name}] Skip ticket {ticket_number} ({ticket_id}) - no webhook configured.")      # Log skip.
             continue                                                                                          # Skip sending.
 
         post_to_teams(target_webhook, teams_payload)                                                          # Send card to Teams sequentially.
+        logger.info("Teams notification sent — product=%s, ticket_number=%s", config.name, ticket_number)
         last_sent[ticket_id] = now_local                                                                      # Record send time for cooldowns.
         changed_set.add(config.last_sent_filename)                                                            # Mark this product's cooldown file as dirty.
         total_sent += 1                                                                                       # Increment total alert count.
@@ -477,11 +492,14 @@ def process_tickets(                                                            
     for filename in changed_set:                                                                              # Save only the cooldown files that changed.
         path = os.path.join(script_dir, filename)                                                             # Build full path to cooldown file.
         save_last_sent(path, cooldown_state[filename])                                                        # Persist updates to disk.
+        logger.debug("Cooldown file saved — filename=%s", filename)
         print(f"[cooldown] Saved {filename}")                                                                 # Log save.
 
     if total_sent == 0:                                                                                       # If nothing sent this cycle...
+        logger.info("No matching tickets this cycle")
         print("[main] No matching tickets found this cycle.")                                                  # Log quiet cycle.
     else:                                                                                                     # If we sent something...
+        logger.info("Cycle complete — %d notification(s) sent", total_sent)
         print(f"[main] Sent {total_sent} reminder notification(s) to Teams.")                                 # Log total count.
     return total_sent                                                                                         # Hand back the total.
 
@@ -533,8 +551,10 @@ def delete_pending_summary_state_file(config: PendingSummaryConfig) -> None:    
     if os.path.exists(path):                                                                 # Delete only when file already exists.
         try:                                                                                 # Attempt safe file removal.
             os.remove(path)                                            # Delete slot-state file.
+            logger.info("Startup cleanup: removed pending state file — path=%s", path)
             print(f"[{config.name}] Startup cleanup: removed {path}")  # Log success for visibility.
         except Exception as error:                                                           # Catch deletion failures without crashing the app.
+            logger.warning("Could not delete pending state file — path=%s", path, exc_info=error)
             print(f"[{config.name}] WARNING: Could not delete state file {path}: {error}")   # Log warning message.
 
 
@@ -615,6 +635,7 @@ def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str) -> N
 
     webhook_url = os.getenv(config.teams_webhook_env_var, "").strip()  # Read pending summary webhook from env.
     if not webhook_url:                                                # Without webhook we cannot send the card.
+        logger.warning("Pending summary skipped — missing env var %s, slot_key=%s", config.teams_webhook_env_var, slot_key)
         print(f"[{config.name}] Skip slot {slot_key} - missing {config.teams_webhook_env_var}.")  # Log clear config issue.
         return                                                                                    # Exit without crashing main loop.
 
@@ -623,6 +644,7 @@ def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str) -> N
     pending_entries = build_pending_ticket_entries(tickets)                                        # Build aligned ticket entries for card body.
 
     if not pending_entries:                                                                      # No pending tickets to report in this snapshot.
+        logger.info("No pending tickets for slot %s", slot_key)
         print(f"[{config.name}] Slot {slot_key}: no pending tickets in the shared result set.")  # Helpful no-op log.
         sent_slots[slot_key] = now_local                                                         # Mark slot as processed to avoid duplicate checks this window.
         save_last_sent(state_path, sent_slots)                                                   # Persist processed slot.
@@ -637,6 +659,7 @@ def run_pending_summary_loop_once(config: PendingSummaryConfig, token: str) -> N
     post_to_teams(webhook_url, payload)                                                           # Send pending summary card to Teams webhook.
     sent_slots[slot_key] = now_local                                                              # Mark this slot as sent.
     save_last_sent(state_path, sent_slots)                                                        # Persist slot-state updates.
+    logger.info("Pending summary sent — count=%d, slot_key=%s", len(pending_entries), slot_key)
     print(f"[{config.name}] Sent {len(pending_entries)} pending ticket(s) for slot {slot_key}.")  # Success log.
 
 # -----------------------------
@@ -650,6 +673,8 @@ def delete_cooldown_file(config: ProductConfig) -> None:                        
     if os.path.exists(path):                                                   # Only try to delete if the file is present.
         try:                                                                                   # Attempt the deletion safely.
             os.remove(path)                                            # Delete the file to clear cooldown history.
+            logger.info("Startup cleanup: removed cooldown file — path=%s", path)
             print(f"[{config.name}] Startup cleanup: removed {path}")  # Log success for visibility.
         except Exception as error:                                                             # Catch any deletion problem.
+            logger.warning("Could not delete cooldown file — path=%s", path, exc_info=error)
             print(f"[{config.name}] WARNING: Could not delete cooldown file {path}: {error}")  # Log the warning clearly.
