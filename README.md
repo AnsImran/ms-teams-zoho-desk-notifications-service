@@ -179,7 +179,7 @@ Source of truth: `config/products.json` (managed via dashboard).
 ├── config/
 │   └── products.json.example        # Sample product config for reference
 ├── scripts/
-│   ├── create_test_tickets.py       # Creates test tickets for each product
+│   ├── create_test_tickets.py       # Creates test tickets via the ticket microservice
 │   ├── migrate_to_json.py           # One-time migration from old registry to JSON
 │   └── render_diagrams.py           # Renders Mermaid diagrams to PNG
 ├── tests/
